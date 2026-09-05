@@ -1,5 +1,11 @@
 @echo off
 setlocal EnableExtensions
+rem Ignore global CUDA toolkits and Python/DLL search customizations.
+for /f "tokens=1 delims==" %%V in ('set CUDA_PATH 2^>nul') do set "%%V="
+set "CUDA_HOME="
+set "CUDA_ROOT="
+set "NVTOOLSEXT_PATH="
+set "PATH=%SystemRoot%\System32;%SystemRoot%;%SystemRoot%\System32\Wbem;%SystemRoot%\System32\WindowsPowerShell\v1.0"
 
 set "PROJECT_DIR=%~dp0"
 set "PULID_PROJECT_ROOT=%PROJECT_DIR%"
@@ -15,10 +21,15 @@ if /I "%~1"=="--network" (
 
 cd /d "%PROJECT_DIR%"
 
-set "SERVER_EXE=%PROJECT_DIR%.venv\Scripts\pulid-server.exe"
-if not exist "%SERVER_EXE%" (
-    echo [ERREUR] Serveur PuLID non installe.
-    echo Executez d'abord : install_windows.bat
+set "SERVER_PYTHON=%PROJECT_DIR%.venv\Scripts\python.exe"
+set "PYTHONHOME="
+set "PYTHONPATH="
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PROJECT_DIR%scripts\prepare_runtime_windows.ps1" -ProjectRoot "%PROJECT_DIR%."
+if errorlevel 1 exit /b 1
+
+"%SERVER_PYTHON%" -I "%PROJECT_DIR%scripts\check_environment.py"
+if errorlevel 1 (
+    echo [ERREUR] Environnement Python inutilisable. Relancez install_windows.bat.
     exit /b 1
 )
 
@@ -32,5 +43,5 @@ echo.
 echo Arret du serveur : Ctrl+C
 echo.
 
-"%SERVER_EXE%" --host %SERVER_HOST% --port 12693 --device cuda --dtype float16 --offload none %SERVER_CORS% %*
+"%SERVER_PYTHON%" -I -m pulid_app.server --host %SERVER_HOST% --port 12693 --device cuda --dtype float16 --offload none %SERVER_CORS% %*
 exit /b %ERRORLEVEL%

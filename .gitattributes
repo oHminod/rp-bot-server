@@ -1,0 +1,12 @@
+# Stable lock inputs and executable scripts across Windows/macOS checkouts.
+* text=auto
+*.sh text eol=lf
+*.ps1 text eol=lf
+*.bat text eol=crlf
+.python-version text eol=lf
+.uv-version text eol=lf
+pyproject.toml text eol=lf
+uv.lock text eol=lf
+runtime/*.json text eol=lf
+runtime/wheels/*.json text eol=lf
+*.whl binary

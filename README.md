@@ -49,8 +49,8 @@ le CPU. Sur macOS, la détection faciale InsightFace reste exécutée sur CPU.
 ### Prérequis
 
 - une connexion Internet lors de la première installation ;
-- Python 3.11 à 3.13, installé automatiquement par les scripts si nécessaire ;
-- sur macOS, un Mac Apple Silicon ;
+- aucun Python, uv ni compilateur à préinstaller ;
+- sur macOS, un Mac Apple Silicon avec macOS 14 ou supérieur ;
 - sous Windows, un GPU NVIDIA et un pilote compatible avec CUDA 13 ;
 - au moins 20 Go disponibles, davantage si plusieurs checkpoints SDXL sont
   installés.
@@ -71,7 +71,7 @@ Pour développer PuLID, cloner le dépôt :
 Dans un terminal :
 
 ```bash
-git clone https://github.com/oHminod/PuLID.git
+git clone --branch dev https://github.com/oHminod/PuLID.git
 cd PuLID
 ```
 
@@ -81,7 +81,10 @@ sans historique Git, tests, caches, configurations locales ni modèles.
 
 ### 2. Installer sur macOS
 
-Depuis un clone de développement :
+Le clone inclut la wheel Metal précompilée et son manifeste sous `runtime/wheels/`,
+comme l’archive de distribution. Elle est versionnée directement dans Git, sans
+Git LFS. Aucune copie manuelle ni compilation locale n’est nécessaire ;
+l’installateur vérifie son SHA-256 avant de l’utiliser.
 
 ```bash
 ./install_macos.sh
@@ -149,9 +152,65 @@ l’installateur le demande, ou acceptez le téléchargement de SDXL Base 1.0. P
 l’ajouter ultérieurement, déposez le fichier dans ce même dossier puis relancez
 le script d’installation.
 
-L’installation est réparable et idempotente : relancer le script de votre
-plateforme vérifie les fichiers présents et ne récupère que ce qui manque ou ce
-qui est invalide.
+L’installation recrée systématiquement `.venv` ; fermer le serveur avant de la
+relancer. Les modèles valides restent réutilisés. Python **3.11.16** est toujours
+installé par uv **0.12.10** dans `PuLID_models/other/uv-python-<plateforme>` ;
+les outils du PATH et le Python système ne sont jamais choisis. Le chemin utilisé
+contient la version complète, sans dépendre de la jonction mineure `cpython-3.11-*`.
+Les binaires uv sont également propres à PuLID, sous `other/uv-<plateforme>-bin`.
+
+`uv.lock` fixe les dépendances directes, indirectes et de construction, leurs
+sources et SHA-256. Windows utilise PyTorch 2.13.0+cu130, Torchvision 0.28.0+cu130
+et llama-cpp-python 0.3.35 CUDA 13.0 avec la DLL CPU portable vérifiée. macOS utilise
+notre wheel llama-cpp-python 0.3.35 précompilée avec Metal, fournie dans l’archive.
+L’installateur ne résout rien de nouveau (`uv sync --frozen`) et vérifie d’abord
+que le manifeste lie bien le verrou au `pyproject.toml`, aux versions des outils
+et au manifeste de la wheel. Les outils de construction Python sont eux aussi
+verrouillés ; aucun compilateur C/C++ n’est utilisé sur le poste utilisateur.
+
+L'installation télécharge les dépendances verrouillées sans réutiliser de paquets
+globaux. Python démarre en mode isolé (`-I`) ; les paquets utilisateur et les
+variables `PYTHONPATH`/`PYTHONHOME` n'interviennent pas. uv ignore les configurations
+locales héritées et globales (`--no-config`), les options nécessaires étant
+passées explicitement. Les lanceurs du backend et du frontend utilisent uniquement
+le Python PuLID. Le chargement CUDA recherche les DLL de la wheel PyTorch locale
+et du pilote NVIDIA, sans utiliser un CUDA Toolkit global. Les composants de
+l'OS et le pilote graphique restent des prérequis de la machine compatible.
+
+BGE tourne sur GPU Metal avec `n_gpu_layers=-1` sur macOS. Une wheel sans le
+backend GPU requis provoque une erreur explicite, sans repli CPU automatique.
+Le mode CPU explicite reste disponible ; InsightFace/ONNX peut rester sur CPU.
+
+PuLID peut être déplacé **sans réinstallation** : arrêtez le backend et le
+frontend, déplacez le dossier complet (y compris `.venv` et `PuLID_models`), puis
+utilisez les lanceurs habituels. Ils retrouvent le Python géré et réajustent
+localement `pyvenv.cfg`, le lien Python macOS et le chemin des sources en mode
+développement. Sur Windows, les lanceurs `python.exe` et `pythonw.exe` de `.venv`
+proviennent du dossier `Lib/venv/scripts/nt` du Python géré : ils lisent `pyvenv.cfg`
+et remplacent les trampolines uv contenant un ancien chemin absolu. Aucun appel à uv,
+téléchargement ou changement de dépendances
+n’est effectué. Les nouvelles installations utilisent aussi `uv venv --relocatable`.
+Un `models_root` interne au projet est enregistré en relatif.
+
+Le déplacement conserve le même OS et la même architecture ; une autre machine
+doit satisfaire les mêmes prérequis système/GPU. Les modèles/Python placés dans
+un dossier externe restent à leur chemin absolu : déplacer ce dossier séparément,
+ou changer sa lettre de lecteur, demande une reconfiguration. Les chemins absolus
+personnalisés dans la configuration ou les variables d’environnement ne sont pas
+réécrits. Le dossier doit être accessible en écriture au premier démarrage après
+le déplacement. Recréez les raccourcis pointant vers l’ancien emplacement.
+
+Pour une installation antérieure à ce mécanisme, mettez les sources à jour et
+lancez une fois PuLID **avant de déplacer le dossier**, afin d’enregistrer le
+chemin portable du Python géré. Après un déplacement, passez d’abord par le
+lanceur backend ou frontend avant d’utiliser directement `.venv` en ligne de
+commande. Une modification des versions ou du verrou exige toujours une
+réinstallation ; un déplacement seul conserve les paquets déjà installés.
+
+Si une installation utilisant déjà `.venv/pulid-python-path` échoue après déplacement
+avec `uv trampoline failed to spawn Python child process`, mettre les sources à
+jour puis relancer `start_windows.bat` suffit à appliquer ce correctif localement.
+Il utilise le Python géré déplacé, sans recréer `.venv` ni toucher aux modèles.
 
 ## Utilisation avec rp-bot
 
@@ -343,21 +402,20 @@ et reconstruire les index LanceDB est détaillée dans
 
 ## Vérifier l’installation
 
-Les scripts de démarrage activent automatiquement l’environnement virtuel. Pour
-utiliser les commandes directement sur macOS ou Linux :
+Les lanceurs appellent directement le Python de `.venv`, après contrôle de sa
+provenance et des chemins. Pour vérifier l’installation macOS :
 
 ```bash
-source .venv/bin/activate
-pulid-gen --version
-pulid-gen doctor
-pulid-gen inspect-models --show-cache-env --fail-on-internal-cache
+.venv/bin/python scripts/check_environment.py
+.venv/bin/python -m pulid_app.cli doctor --allow-missing-sdxl
+.venv/bin/python scripts/inspect_models.py --show-cache-env --fail-on-internal-cache --allow-missing-sdxl
 ```
 
 Sous Windows :
 
 ```bat
-.venv\Scripts\pulid-gen.exe --version
-.venv\Scripts\pulid-gen.exe doctor
+.venv\Scripts\python.exe scripts\check_environment.py
+.venv\Scripts\python.exe -m pulid_app.cli doctor --allow-missing-sdxl
 ```
 
 `doctor` contrôle les checkpoints, les modèles de visage, PuLID, BGE-M3, les
@@ -466,6 +524,7 @@ responsable de l’enregistrement du PNG reçu.
 
 | Symptôme | Action recommandée |
 |---|---|
+| uv affiche `everything's installed!` puis `Installation de uv ... impossible` | Mettre à jour `dev` et relancer `install_windows.bat --development`. L'ancien bootstrap pouvait lire un `$LASTEXITCODE` vide ou périmé après le script PowerShell. Le contrôle vérifie désormais le fichier uv puis son code de sortie et sa version. Si uv est déjà installé, relancer l'ancien installateur permet également de dépasser ce premier blocage. |
 | Catalogue PuLID indisponible dans `rp-bot` | Vérifier que le serveur est démarré et que l’URL se termine par `:12693`, sans `/v1` |
 | Serveur distant inaccessible | Sur un réseau privé uniquement, exécuter `install_windows.bat --network`, puis `start_windows.bat --network` et utiliser l’IPv4 privée affichée |
 | Aucun visage détecté | Choisir un avatar net, de face et suffisamment grand |

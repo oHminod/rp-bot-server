@@ -1,0 +1,9 @@
+{
+  "filename": "llama_cpp_python-0.3.35-py3-none-macosx_11_0_arm64.whl",
+  "sha256": "2663cd58f7f37997ccb73e9290c99e56695e06c70f4f334a96ece79b9c021412",
+  "source_url": "https://files.pythonhosted.org/packages/1a/71/5ecdad726b87527b361d9d95313c6591f27bb3fad79c9ab524ad4250b4c9/llama_cpp_python-0.3.35.tar.gz",
+  "source_sha256": "1139dbb54509074b70893fab8554e3b079aa9f4d312058ce4018ef0019e3de12",
+  "python": "3.11.16",
+  "platform": "macOS-15.7.7-arm64-arm-64bit",
+  "compiler": "Apple clang version 17.0.0 (clang-1700.6.4.2)\nTarget: arm64-apple-darwin24.6.0\nThread model: posix\nInstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin"
+}

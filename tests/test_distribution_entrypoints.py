@@ -30,12 +30,9 @@ def test_macos_production_profile_is_additive_and_excludes_dev_dependencies() ->
     assert (
         'PULID_INSTALL_PROFILE="${PULID_INSTALL_PROFILE:-development}"' in installer
     )
-    assert 'PULID_PROJECT_SPEC=".[inference,pulid,server,embeddings]"' in installer
-    assert (
-        'PULID_PROJECT_SPEC=".[inference,pulid,server,embeddings,dev]"'
-        in installer
-    )
-    assert "PULID_EDITABLE_ARGS=(-e)" in installer
+    assert 'scripts/install_environment.py' in installer
+    assert '--profile "${PULID_INSTALL_PROFILE}"' in installer
+    assert 'command -v uv' not in installer
     assert 'install_macos.sh" --production' in wrapper
     assert 'export PULID_PROJECT_ROOT="${PROJECT_DIR}"' in installer
 
@@ -45,9 +42,8 @@ def test_windows_production_profile_is_additive_and_excludes_dev_dependencies() 
     wrapper = _read("install_production_windows.bat")
 
     assert "PULID_INSTALL_PROFILE=development" in installer
-    assert "PULID_PROJECT_SPEC=.[inference,pulid,server,embeddings]" in installer
-    assert "PULID_PROJECT_SPEC=.[inference,pulid,server,embeddings,dev]" in installer
-    assert "PULID_EDITABLE_FLAG=-e" in installer
+    assert 'scripts\\bootstrap_windows.ps1' in installer
+    assert 'where uv.exe' not in installer
     assert "install_windows.bat\" --production" in wrapper
     assert 'set "PULID_PROJECT_ROOT=%PROJECT_DIR%"' in installer
 

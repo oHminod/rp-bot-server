@@ -136,6 +136,8 @@ def run_inspection(
         )
 
     inventory = inspect_models(config)
+    for warning in inventory.warnings:
+        console.print(f"Inventaire partiel — {warning}", style="yellow", markup=False)
 
     if inventory.pulid_checkpoints:
         console.print("[green]✓ Checkpoint(s) PuLID :[/]")

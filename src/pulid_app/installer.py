@@ -721,6 +721,7 @@ def write_local_config(
     *,
     default_config: Path = DEFAULT_CONFIG_PATH,
     destination: Path = LOCAL_CONFIG_PATH,
+    project_root: Path = PROJECT_ROOT,
 ) -> Path:
     """Régénère la configuration locale depuis les valeurs à jour du dépôt."""
 
@@ -732,7 +733,10 @@ def write_local_config(
         ) from exc
     if not isinstance(raw, dict) or not isinstance(raw.get("sdxl"), dict):
         raise InstallerError(f"Configuration par défaut invalide : {default_config}")
-    raw["models_root"] = models_root.as_posix()
+    try:
+        raw["models_root"] = models_root.resolve().relative_to(project_root.resolve()).as_posix()
+    except ValueError:
+        raw["models_root"] = models_root.as_posix()
     if sdxl_checkpoint is not None:
         try:
             relative_checkpoint = sdxl_checkpoint.resolve(strict=False).relative_to(

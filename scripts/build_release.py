@@ -37,6 +37,8 @@ EXCLUDED_PATH_PARTS = frozenset(
 ROOT_FILES = (
     ".env.example",
     ".python-version",
+    ".uv-version",
+    "uv.lock",
     "API_FRONTEND_INTEGRATION.md",
     "LICENSE",
     "README.md",
@@ -58,9 +60,16 @@ STATIC_FILES = (
     "inputs/.gitkeep",
     "outputs/.gitkeep",
 )
-TREE_DIRECTORIES = ("frontend", "src")
+TREE_DIRECTORIES = ("frontend", "src", "runtime", "requirements")
 SCRIPT_NAMES = (
     "build_release.py",
+    "bootstrap_windows.ps1",
+    "install_environment.py",
+    "check_environment.py",
+    "prepare_runtime_macos.sh",
+    "prepare_runtime_windows.ps1",
+    "build_macos_wheel.py",
+    "lock_environment.py",
     "cache_identity.py",
     "inspect_models.py",
     "prepare_pulid.py",
@@ -76,6 +85,15 @@ REQUIRED_RELEASE_FILES = frozenset(
         "install_production_windows.bat",
         "install_windows.bat",
         "pyproject.toml",
+        "uv.lock",
+        ".uv-version",
+        "runtime/lock-manifest.json",
+        "runtime/wheels/manifest.json",
+        "scripts/bootstrap_windows.ps1",
+        "scripts/install_environment.py",
+        "scripts/check_environment.py",
+        "scripts/prepare_runtime_macos.sh",
+        "scripts/prepare_runtime_windows.ps1",
         "src/pulid_app/__init__.py",
         "src/pulid_app/api_contract.py",
         "start_pulid_server.sh",
@@ -147,16 +165,32 @@ def collect_release_files(project_root: Path) -> tuple[Path, ...]:
     """Retourne la liste blanche triée des fichiers distribuables."""
 
     root = project_root.resolve()
+    # A source checkout alone cannot produce an installable Mac archive.
+    try:
+        from scripts.install_environment import verify_lock
+    except ModuleNotFoundError:
+        from install_environment import verify_lock
+    verify_lock(root)
+    candidates = [root / name for name in (*ROOT_FILES, *STATIC_FILES)]
+    candidates.extend(root / "scripts" / name for name in SCRIPT_NAMES)
+    for name in TREE_DIRECTORIES:
+        candidates.extend((root / name).rglob("*"))
     selected = tuple(
         sorted(
             (
                 path
-                for path in root.rglob("*")
+                for path in candidates
                 if path.is_file() and _is_release_file(path.relative_to(root))
             ),
             key=lambda path: path.relative_to(root).as_posix(),
         )
     )
+    wheel_manifest = root / "runtime/wheels/manifest.json"
+    if wheel_manifest.is_file():
+        manifest = json.loads(wheel_manifest.read_text())
+        wheel = wheel_manifest.parent / manifest["filename"]
+        if not wheel.is_file() or sha256_file(wheel) != manifest["sha256"]:
+            raise RuntimeError(f"Wheel Metal absente ou corrompue : {wheel}. Exécutez scripts/build_macos_wheel.py puis scripts/lock_environment.py.")
     relative_files = {path.relative_to(root).as_posix() for path in selected}
     missing = sorted(REQUIRED_RELEASE_FILES - relative_files)
     if missing:

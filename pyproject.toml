@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.27"]
+requires = ["hatchling==1.29.0"]
 build-backend = "hatchling.build"
 
 [project]
@@ -7,47 +7,47 @@ name = "pulid-app"
 version = "0.1.0"
 description = "Pipeline Python autonome pour PuLID et SDXL"
 readme = "README.md"
-requires-python = ">=3.11,<3.14"
+requires-python = "==3.11.16"
 dependencies = [
   "insightface==1.0.1",
-  "numpy>=1.26,<3",
-  "onnxruntime>=1.20,<2",
-  "opencv-python>=4.10,<5",
-  "Pillow>=11,<13",
-  "PyYAML>=6.0.2,<7",
-  "rich>=13.9,<15",
+  "numpy==2.4.6",
+  "onnxruntime==1.28.0",
+  "opencv-python==4.14.0.94",
+  "Pillow==12.3.0",
+  "PyYAML==6.0.3",
+  "rich==14.3.4",
   # Utilisé par les transformations géométriques d'InsightFace.
-  "scikit-image>=0.22,<0.26",
-  "torch>=2.13,<2.14",
+  "scikit-image==0.25.2",
+  "torch==2.13.0",
 ]
 
 [project.optional-dependencies]
 # Dépendances complémentaires installées lorsque les phases d'inférence commencent.
 inference = [
-  "accelerate>=1.14,<1.15",
-  "diffusers>=0.39,<0.40",
-  "huggingface-hub>=1.27,<1.28",
-  "safetensors>=0.8,<0.9",
-  "torchvision>=0.28,<0.29",
-  "transformers>=5.15,<5.16",
+  "accelerate==1.14.0",
+  "diffusers==0.39.0",
+  "huggingface-hub==1.27.0",
+  "safetensors==0.8.0",
+  "torchvision==0.28.0",
+  "transformers==5.15.0",
 ]
 pulid = [
-  "einops>=0.8,<0.9",
-  "facexlib>=0.3,<0.4",
-  "ftfy>=6.3,<7",
-  "timm>=1.0,<2",
+  "einops==0.8.2",
+  "facexlib==0.3.0",
+  "ftfy==6.3.1",
+  "timm==1.0.28",
 ]
 server = [
-  "fastapi>=0.115,<1",
-  "python-multipart>=0.0.20,<1",
-  "uvicorn>=0.34,<1",
+  "fastapi==0.141.1",
+  "python-multipart==0.0.32",
+  "uvicorn==0.52.3",
 ]
 embeddings = [
-  "llama-cpp-python>=0.3.16,<0.4",
+  "llama-cpp-python==0.3.35",
 ]
 dev = [
-  "httpx>=0.28,<1",
-  "pytest>=8.3,<10",
+  "httpx==0.28.1",
+  "pytest==9.1.1",
 ]
 
 [project.scripts]
@@ -67,4 +67,30 @@ markers = [
   "integration: test plusieurs composants avec les modèles locaux configurés",
   "slow: test charge un checkpoint lourd ou exécute une génération",
   "gpu: test nécessitant un accélérateur MPS ou CUDA",
+]
+
+# Builders are also resolved in uv.lock. Install this group before building the
+# few pure-Python sdists; no compiler or unpinned isolated build environment.
+[dependency-groups]
+build = ["hatchling==1.29.0", "editables==0.5", "setuptools==84.0.0", "wheel==0.46.3"]
+
+[tool.uv]
+required-version = "==0.12.10"
+environments = [
+  "sys_platform == 'win32'",
+  "sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
+no-build-package = ["insightface", "llama-cpp-python", "torch", "torchvision"]
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu130", marker = "sys_platform == 'win32'" }]
+torchvision = [{ url = "https://download-r2.pytorch.org/whl/cu130/torchvision-0.28.0%2Bcu130-cp311-cp311-win_amd64.whl", marker = "sys_platform == 'win32'" }]
+llama-cpp-python = [
+  { url = "https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.35-cu130/llama_cpp_python-0.3.35-py3-none-win_amd64.whl", marker = "sys_platform == 'win32'" },
+  { path = "runtime/wheels/llama_cpp_python-0.3.35-py3-none-macosx_11_0_arm64.whl", marker = "sys_platform == 'darwin'" },
 ]

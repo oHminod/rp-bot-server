@@ -1,0 +1,4 @@
+# Maintainer-only macOS wheel build tools. Xcode/Apple clang is the host compiler.
+scikit-build-core==0.11.6
+cmake==4.2.3
+ninja==1.13.0
