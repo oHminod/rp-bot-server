@@ -1,9 +1,14 @@
-# PuLID pour rp-bot
+# rp-bot-server
 
 Ce projet fournit le service local de génération d’images de
 [`rp-bot`](https://github.com/oHminod/rp-bot). Il transforme l’avatar d’un
 personnage et le contexte d’un message en une image SDXL tout en préservant son
-identité grâce à PuLID.
+identité grâce à [PuLID](https://github.com/ToTheBeginning/PuLID).
+
+`rp-bot-server` est le nom de ce projet ; PuLID désigne la technologie
+d’identité utilisée. Les noms techniques existants (`pulid_app`, `pulid-gen`,
+`PuLID_models`, scripts et archives `pulid-<version>.tar.gz`) sont conservés
+pour assurer la compatibilité avec les installations et avec `rp-bot`.
 
 Le service peut également être utilisé sans `rp-bot` grâce à un frontend web
 basique inclus dans le dépôt. Une CLI et une API HTTP sont disponibles pour les
@@ -18,7 +23,7 @@ usages avancés. L’ensemble fonctionne sans ComfyUI.
   - [3. Installer sous Windows](#3-installer-sous-windows)
   - [4. Choisir le checkpoint SDXL](#4-choisir-le-checkpoint-sdxl)
 - [Utilisation avec rp-bot](#utilisation-avec-rp-bot)
-  - [1. Démarrer PuLID](#1-démarrer-pulid)
+  - [1. Démarrer rp-bot-server](#1-démarrer-rp-bot-server)
   - [2. Configurer le prompt SDXL](#2-configurer-le-prompt-sdxl-dans-rp-bot)
   - [3. Connecter le service d’image](#3-connecter-le-service-dimage)
   - [4. Générer depuis une conversation](#4-générer-depuis-une-conversation)
@@ -66,17 +71,19 @@ installation gérée utilise l’archive de release et ne requiert pas Git.
 
 ### 1. Choisir le parcours
 
-Pour développer PuLID, cloner le dépôt :
+Pour développer `rp-bot-server`, cloner le dépôt dans le dossier local `PuLID` :
 
 Dans un terminal :
 
 ```bash
-git clone --branch dev https://github.com/oHminod/PuLID.git
+git clone --branch dev https://github.com/oHminod/rp-bot-server.git PuLID
 cd PuLID
 ```
 
-Pour une installation gérée, extraire `pulid-<version>.tar.gz` dans un nouveau
-dossier. L’archive contient les mêmes installateurs et lanceurs que le clone,
+Pour une installation gérée, télécharger `pulid-<version>.tar.gz` depuis les
+[releases de rp-bot-server](https://github.com/oHminod/rp-bot-server/releases),
+puis l’extraire dans un nouveau dossier. L’archive contient les mêmes
+installateurs et lanceurs que le clone,
 sans historique Git, tests, caches, configurations locales ni modèles.
 
 ### 2. Installer sur macOS
@@ -157,7 +164,7 @@ relancer. Les modèles valides restent réutilisés. Python **3.11.16** est touj
 installé par uv **0.12.10** dans `PuLID_models/other/uv-python-<plateforme>` ;
 les outils du PATH et le Python système ne sont jamais choisis. Le chemin utilisé
 contient la version complète, sans dépendre de la jonction mineure `cpython-3.11-*`.
-Les binaires uv sont également propres à PuLID, sous `other/uv-<plateforme>-bin`.
+Les binaires uv sont également propres au projet, sous `other/uv-<plateforme>-bin`.
 
 `uv.lock` fixe les dépendances directes, indirectes et de construction, leurs
 sources et SHA-256. Windows utilise PyTorch 2.13.0+cu130, Torchvision 0.28.0+cu130
@@ -173,15 +180,15 @@ globaux. Python démarre en mode isolé (`-I`) ; les paquets utilisateur et les
 variables `PYTHONPATH`/`PYTHONHOME` n'interviennent pas. uv ignore les configurations
 locales héritées et globales (`--no-config`), les options nécessaires étant
 passées explicitement. Les lanceurs du backend et du frontend utilisent uniquement
-le Python PuLID. Le chargement CUDA recherche les DLL de la wheel PyTorch locale
-et du pilote NVIDIA, sans utiliser un CUDA Toolkit global. Les composants de
+le Python de `rp-bot-server`. Le chargement CUDA recherche les DLL de la wheel
+PyTorch locale et du pilote NVIDIA, sans utiliser un CUDA Toolkit global. Les composants de
 l'OS et le pilote graphique restent des prérequis de la machine compatible.
 
 BGE tourne sur GPU Metal avec `n_gpu_layers=-1` sur macOS. Une wheel sans le
 backend GPU requis provoque une erreur explicite, sans repli CPU automatique.
 Le mode CPU explicite reste disponible ; InsightFace/ONNX peut rester sur CPU.
 
-PuLID peut être déplacé **sans réinstallation** : arrêtez le backend et le
+`rp-bot-server` peut être déplacé **sans réinstallation** : arrêtez le backend et le
 frontend, déplacez le dossier complet (y compris `.venv` et `PuLID_models`), puis
 utilisez les lanceurs habituels. Ils retrouvent le Python géré et réajustent
 localement `pyvenv.cfg`, le lien Python macOS et le chemin des sources en mode
@@ -201,7 +208,7 @@ réécrits. Le dossier doit être accessible en écriture au premier démarrage 
 le déplacement. Recréez les raccourcis pointant vers l’ancien emplacement.
 
 Pour une installation antérieure à ce mécanisme, mettez les sources à jour et
-lancez une fois PuLID **avant de déplacer le dossier**, afin d’enregistrer le
+lancez une fois `rp-bot-server` **avant de déplacer le dossier**, afin d’enregistrer le
 chemin portable du Python géré. Après un déplacement, passez d’abord par le
 lanceur backend ou frontend avant d’utiliser directement `.venv` en ligne de
 commande. Une modification des versions ou du verrou exige toujours une
@@ -218,7 +225,7 @@ Il utilise le Python géré déplacé, sans recréer `.venv` ni toucher aux mod�
 à partir du message et de la scène, envoie l’avatar de l’auteur comme référence,
 puis conserve l’image générée dans la discussion.
 
-### 1. Démarrer PuLID
+### 1. Démarrer rp-bot-server
 
 Sur macOS :
 
@@ -255,7 +262,7 @@ Pour créer un raccourci sur le Bureau sans déplacer le script :
 1. faites un clic droit sur `start_windows.bat` ;
 2. sous Windows 11, choisissez **Afficher plus d’options** ;
 3. choisissez **Envoyer vers > Bureau (créer un raccourci)** ;
-4. renommez éventuellement le raccourci en **Serveur PuLID**.
+4. renommez éventuellement le raccourci en **rp-bot-server**.
 
 Conservez le fichier `.bat` dans le dossier du projet : créez un raccourci au
 lieu de le copier sur le Bureau. Si le dossier PuLID est déplacé, recréez le
@@ -283,8 +290,8 @@ PuLID** :
 
 Utilisez l’une de ces adresses :
 
-- `http://127.0.0.1:12693` si PuLID et `rp-bot` tournent sur la même machine ;
-- `http://<IP_DU_PC>:12693` si PuLID tourne sur un PC Windows du réseau local.
+- `http://127.0.0.1:12693` si `rp-bot-server` et `rp-bot` tournent sur la même machine ;
+- `http://<IP_DU_PC>:12693` si `rp-bot-server` tourne sur un PC Windows du réseau local.
 
 Le badge **Catalogue disponible** confirme que `rp-bot` atteint le serveur. Le
 bouton **Actualiser** recharge la liste des checkpoints et des samplers.
@@ -333,7 +340,7 @@ start_frontend_windows.bat
 ```
 
 Vous pouvez créer de la même manière deux raccourcis sur le Bureau, par exemple
-**Serveur PuLID** pour `start_windows.bat` et **Frontend PuLID** pour
+**rp-bot-server** pour `start_windows.bat` et **Frontend rp-bot-server** pour
 `start_frontend_windows.bat`. Démarrez toujours le serveur avant le frontend.
 
 Ouvrez ensuite [http://localhost:8888](http://localhost:8888).
@@ -395,7 +402,7 @@ format : embedding
 activé : oui
 ```
 
-Si LM Studio sert également au chat, ne remplacez pas son URL : le backend PuLID
+Si LM Studio sert également au chat, ne remplacez pas son URL : `rp-bot-server`
 n’expose pas `/v1/chat/completions`. La procédure pour séparer les fournisseurs
 et reconstruire les index LanceDB est détaillée dans
 [`RP_BOT_TEXT_EMBEDDING_INTEGRATION.md`](RP_BOT_TEXT_EMBEDDING_INTEGRATION.md).
@@ -430,8 +437,8 @@ curl http://127.0.0.1:12693/version
 curl http://127.0.0.1:12693/capabilities
 ```
 
-Elles exposent séparément la version PuLID, dérivée de `pyproject.toml`, et la
-version SemVer du contrat API.
+Elles exposent séparément la version de `rp-bot-server`, dérivée de
+`pyproject.toml`, et la version SemVer du contrat API.
 
 ## Ajouter un checkpoint SDXL
 

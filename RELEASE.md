@@ -1,6 +1,12 @@
-# Publier PuLID
+# Publier rp-bot-server
 
-`pyproject.toml` est l’unique source de la version PuLID. Le nom de l’archive,
+Les releases sont hébergées dans
+[`oHminod/rp-bot-server`](https://github.com/oHminod/rp-bot-server/releases).
+Le renommage du dépôt conserve les tags, archives et empreintes déjà publiés.
+Les archives gardent le nom `pulid-<version>.tar.gz` et le composant de
+distribution reste identifié par `pulid` dans `rp-bot`.
+
+`pyproject.toml` est l’unique source de la version de `rp-bot-server`. Le nom de l’archive,
 sa racine, `release-metadata.json` et les commandes de construction lisent tous
 `project.version`; aucune version applicative n’est recopiée dans les scripts.
 
