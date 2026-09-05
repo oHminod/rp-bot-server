@@ -10,6 +10,24 @@ distribution reste identifié par `pulid` dans `rp-bot`.
 sa racine, `release-metadata.json` et les commandes de construction lisent tous
 `project.version`; aucune version applicative n’est recopiée dans les scripts.
 
+## Version 0.1.2
+
+Corrige l'installation pilotée par RP Bot avec un dossier de modèles personnalisé.
+Les scripts macOS/Windows et le CLI Python respectent désormais le chemin final
+explicite, même absent, sans lui ajouter `PuLID_models` ni relancer un prompt.
+Le chemin choisi est conservé jusqu'à l'écriture de la configuration locale.
+Le parcours interactif sans chemin explicite est inchangé. Le test sans SDXL
+couvre aussi ce cas. Python, uv, les dépendances et la wheel Metal sont identiques
+à 0.1.1 ; seul le numéro applicatif change dans le verrou.
+
+Validation : 277 tests réussis, 8 ignorés (trois intégrations lourdes et cinq
+cas Windows natifs). La sélection et la création des dossiers sont exécutées
+sous Bash macOS avec l'entrée standard fermée ; le parcours Python sans SDXL
+vérifie le même chemin jusqu'au fichier de configuration, avec téléchargements
+simulés. Les adaptateurs actuels de RP Bot ont aussi été exécutés sur les deux
+scripts complets. Aucun nouveau téléchargement de modèles ni essai GPU n'était
+nécessaire pour ce correctif de chemins.
+
 ## Version 0.1.1
 
 Prérelease MVP non signée, dans la continuité de 0.1.0. Elle distribue le Python

@@ -50,15 +50,11 @@ set "REQUESTED_MODELS_ROOT=%PULID_MODELS_ROOT%"
 set "PULID_MODELS_ROOT="
 
 if not defined REQUESTED_MODELS_ROOT goto :check_configured_models_root
-for %%I in ("%REQUESTED_MODELS_ROOT%") do set "CUSTOM_MODELS_FULL=%%~fI"
-for %%I in ("%CUSTOM_MODELS_FULL%") do set "CUSTOM_MODELS_NAME=%%~nxI"
-if /I "%CUSTOM_MODELS_NAME%"=="PuLID_models" (
-    set "PULID_MODELS_ROOT=%CUSTOM_MODELS_FULL%"
-) else (
-    set "PULID_MODELS_ROOT=%CUSTOM_MODELS_FULL%\PuLID_models"
-)
-if exist "%PULID_MODELS_ROOT%\" goto :existing_models_root
-set "PULID_MODELS_ROOT="
+rem An explicit root is final, even when it does not exist yet.
+cd /d "%PROJECT_DIR%"
+if errorlevel 1 goto :error_exit
+for %%I in ("%REQUESTED_MODELS_ROOT%") do set "PULID_MODELS_ROOT=%%~fI"
+goto :models_root_ready
 
 :check_configured_models_root
 set "CONFIG_MODELS_ROOT="

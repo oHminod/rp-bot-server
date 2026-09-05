@@ -164,17 +164,26 @@ BASE_SDXL = HuggingFaceAsset(
 )
 
 
+def resolve_explicit_models_root(
+    selected: str | Path,
+    *,
+    project_root: Path = PROJECT_ROOT,
+) -> Path:
+    """Résout une racine finale explicite, sans imposer son nom ni son existence."""
+
+    candidate = Path(selected).expanduser()
+    if not candidate.is_absolute():
+        candidate = project_root / candidate
+    return candidate.resolve(strict=False)
+
+
 def resolve_models_root(
     selected: str | Path,
     *,
     project_root: Path = PROJECT_ROOT,
 ) -> Path:
-    """Résout un dossier parent ou un dossier ``PuLID_models`` déjà nommé."""
-
-    candidate = Path(selected).expanduser()
-    if not candidate.is_absolute():
-        candidate = project_root / candidate
-    candidate = candidate.resolve(strict=False)
+    """Résout le choix interactif d'un parent ou dossier ``PuLID_models``."""
+    candidate = resolve_explicit_models_root(selected, project_root=project_root)
     if candidate.name.casefold() == MODELS_DIRECTORY_NAME.casefold():
         return candidate
     return candidate / MODELS_DIRECTORY_NAME
@@ -270,7 +279,7 @@ def find_existing_models_root(
     environment_root = environment.get("PULID_MODELS_ROOT", "").strip()
     if environment_root:
         candidates.append(
-            resolve_models_root(environment_root, project_root=project_root)
+            resolve_explicit_models_root(environment_root, project_root=project_root)
         )
     configured_root, _checkpoint = read_local_installation(
         config_path=config_path,
@@ -805,8 +814,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--models-root",
         type=Path,
         help=(
-            "Dossier parent ou dossier déjà nommé PuLID_models. Sans cette option, "
-            "le CLI réutilise l'installation détectée ou pose la question."
+            "Racine finale des modèles, quel que soit son nom (créée si absente). "
+            "Prioritaire sur PULID_MODELS_ROOT, puis la configuration locale."
         ),
     )
     parser.add_argument(
@@ -836,8 +845,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def run_installation(args: argparse.Namespace, console: Console) -> int:
     configured_root, configured_checkpoint = read_local_installation()
-    if args.models_root is not None:
-        models_root = resolve_models_root(args.models_root)
+    requested_root = args.models_root if args.models_root is not None else os.environ.get("PULID_MODELS_ROOT")
+    if requested_root:
+        models_root = resolve_explicit_models_root(requested_root)
     else:
         models_root = find_existing_models_root() or prompt_models_root()
     ensure_writable_directory(models_root)

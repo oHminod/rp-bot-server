@@ -10,6 +10,14 @@ d’identité utilisée. Les noms techniques existants (`pulid_app`, `pulid-gen`
 `PuLID_models`, scripts et archives `pulid-<version>.tar.gz`) sont conservés
 pour assurer la compatibilité avec les installations et avec `rp-bot`.
 
+À partir de 0.1.2, `PULID_MODELS_ROOT` et l'option Python `--models-root`
+désignent le dossier final exact des modèles, quel que soit son nom. Le dossier
+est créé s'il manque ; aucun sous-dossier `PuLID_models` n'est ajouté et aucune
+question d'emplacement n'est posée. Les chemins relatifs partent de la racine du
+projet. `--models-root` prime sur la variable d'environnement, qui prime sur la
+configuration locale. Sans chemin explicite, le parcours interactif habituel
+(choix d'un parent ou d'un dossier `PuLID_models`) reste disponible.
+
 Le service peut également être utilisé sans `rp-bot` grâce à un frontend web
 basique inclus dans le dépôt. Une CLI et une API HTTP sont disponibles pour les
 usages avancés. L’ensemble fonctionne sans ComfyUI.

@@ -38,8 +38,8 @@ case "${PULID_INSTALL_PROFILE}" in
     ;;
 esac
 
-normalize_models_root() {
-  local selected="${1%/}"
+resolve_models_path() {
+  local selected="$1"
   if [[ "${selected}" == "~" ]]; then
     selected="${HOME}"
   elif [[ "${selected}" == "~/"* ]]; then
@@ -47,6 +47,12 @@ normalize_models_root() {
   elif [[ "${selected}" != /* ]]; then
     selected="${PROJECT_DIR}/${selected}"
   fi
+  printf '%s\n' "${selected}"
+}
+
+normalize_models_root() {
+  local selected
+  selected="$(resolve_models_path "$1")"
   if [[ "$(basename -- "${selected}" | tr '[:upper:]' '[:lower:]')" == "pulid_models" ]]; then
     printf '%s\n' "${selected}"
   else
@@ -84,10 +90,8 @@ REQUESTED_MODELS_ROOT="${PULID_MODELS_ROOT:-}"
 PULID_MODELS_ROOT=""
 
 if [[ -n "${REQUESTED_MODELS_ROOT}" ]]; then
-  REQUESTED_MODELS_ROOT="$(normalize_models_root "${REQUESTED_MODELS_ROOT}")"
-  if [[ -d "${REQUESTED_MODELS_ROOT}" ]]; then
-    PULID_MODELS_ROOT="${REQUESTED_MODELS_ROOT}"
-  fi
+  # An explicit root is final, even when it does not exist yet.
+  PULID_MODELS_ROOT="$(resolve_models_path "${REQUESTED_MODELS_ROOT}")"
 fi
 
 if [[ -z "${PULID_MODELS_ROOT}" ]]; then
@@ -102,7 +106,7 @@ if [[ -z "${PULID_MODELS_ROOT}" && -d "${DEFAULT_MODELS_ROOT}" ]]; then
 fi
 
 if [[ -n "${PULID_MODELS_ROOT}" ]]; then
-  echo "Installation existante détectée : ${PULID_MODELS_ROOT}"
+  echo "Dossier de modèles sélectionné : ${PULID_MODELS_ROOT}"
 else
   while true; do
     read -r -p "Utiliser l'emplacement par défaut ${DEFAULT_MODELS_ROOT} ? [O/n] " USE_DEFAULT
