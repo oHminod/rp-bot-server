@@ -102,7 +102,7 @@ def test_llama_cpp_factory_forces_cpu_and_local_checkpoint(
         captured.update(kwargs)
         return sentinel
 
-    monkeypatch.setitem(sys.modules, "llama_cpp", SimpleNamespace(Llama=fake_llama))
+    monkeypatch.setitem(sys.modules, "llama_cpp", SimpleNamespace(Llama=fake_llama, llama_supports_gpu_offload=lambda: True, llama_print_system_info=lambda: b"MTL CUDA"))
     config = TextEmbeddingConfig(
         checkpoint=checkpoint,
         context_size=4096,
@@ -142,7 +142,7 @@ def test_llama_cpp_factory_uses_runtime_thread_defaults(
         captured.update(kwargs)
         return object()
 
-    monkeypatch.setitem(sys.modules, "llama_cpp", SimpleNamespace(Llama=fake_llama))
+    monkeypatch.setitem(sys.modules, "llama_cpp", SimpleNamespace(Llama=fake_llama, llama_supports_gpu_offload=lambda: True, llama_print_system_info=lambda: b"MTL CUDA"))
 
     load_llama_cpp_embedding_model(TextEmbeddingConfig(checkpoint=checkpoint))
 
@@ -164,7 +164,7 @@ def test_llama_cpp_factory_offloads_all_layers_without_reducing_context(
         captured.update(kwargs)
         return object()
 
-    monkeypatch.setitem(sys.modules, "llama_cpp", SimpleNamespace(Llama=fake_llama))
+    monkeypatch.setitem(sys.modules, "llama_cpp", SimpleNamespace(Llama=fake_llama, llama_supports_gpu_offload=lambda: True, llama_print_system_info=lambda: b"MTL CUDA"))
     config = TextEmbeddingConfig(checkpoint=checkpoint)
 
     load_llama_cpp_embedding_model(config, device=device)
@@ -208,3 +208,20 @@ def test_embedding_service_rejects_token_overflow_without_truncating(
         )
 
     assert engine.called is False
+
+
+@pytest.mark.parametrize('device', ['mps', 'cuda'])
+def test_gpu_embedding_rejects_cpu_wheel_without_fallback(tmp_path, monkeypatch, device):
+    from pulid_app.exceptions import ModelLoadError
+    checkpoint = tmp_path / 'bge.gguf'
+    checkpoint.touch()
+
+    def forbidden_load(**kwargs):
+        raise AssertionError('A CPU model must never be loaded for a GPU request')
+
+    monkeypatch.setitem(sys.modules, 'llama_cpp', SimpleNamespace(
+        Llama=forbidden_load, llama_supports_gpu_offload=lambda: False,
+        llama_print_system_info=lambda: b'CPU : NEON = 1',
+    ))
+    with pytest.raises(ModelLoadError, match='Aucun repli CPU'):
+        load_llama_cpp_embedding_model(TextEmbeddingConfig(checkpoint=checkpoint), device=device)

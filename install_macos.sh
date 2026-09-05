@@ -6,7 +6,6 @@ PROJECT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 export PULID_PROJECT_ROOT="${PROJECT_DIR}"
 VENV_DIR="${PROJECT_DIR}/.venv"
 VENV_PYTHON="${VENV_DIR}/bin/python"
-LLAMA_CPP_METAL_INDEX="https://abetlen.github.io/llama-cpp-python/whl/metal"
 PULID_INSTALL_PROFILE="${PULID_INSTALL_PROFILE:-development}"
 
 while (($#)); do
@@ -131,6 +130,9 @@ export TRANSFORMERS_CACHE="${PULID_MODELS_ROOT}/huggingface/transformers"
 export TORCH_HOME="${PULID_MODELS_ROOT}/torch"
 export XDG_CACHE_HOME="${PULID_MODELS_ROOT}/other"
 export MPLCONFIGDIR="${PULID_MODELS_ROOT}/other/matplotlib"
+for pulid_uv_variable in ${!UV_@}; do
+  unset "${pulid_uv_variable}"
+done
 export UV_CACHE_DIR="${PULID_MODELS_ROOT}/other/uv-macos"
 export UV_PYTHON_INSTALL_DIR="${PULID_MODELS_ROOT}/other/uv-python-macos"
 export UV_LINK_MODE=copy
@@ -157,89 +159,40 @@ mkdir -p \
   "${UV_CACHE_DIR}" \
   "${UV_PYTHON_INSTALL_DIR}"
 
-UV_EXE="$(command -v uv || true)"
-if [[ -z "${UV_EXE}" ]]; then
-  UV_INSTALL_DIR="${PULID_MODELS_ROOT}/other/uv-macos-bin"
-  export UV_INSTALL_DIR
-  mkdir -p "${UV_INSTALL_DIR}"
-  echo "Installation de uv sous ${UV_INSTALL_DIR}..."
-  curl --proto '=https' --tlsv1.2 -LsSf https://astral.sh/uv/install.sh | sh
-  UV_EXE="${UV_INSTALL_DIR}/uv"
-fi
-
-if [[ ! -x "${UV_EXE}" ]]; then
-  echo "[ERREUR] Exécutable uv introuvable : ${UV_EXE}" >&2
+UV_VERSION="$(cat "${PROJECT_DIR}/.uv-version")"
+PYTHON_VERSION="$(cat "${PROJECT_DIR}/.python-version")"
+UV_UNMANAGED_INSTALL="${PULID_MODELS_ROOT}/other/uv-macos-bin"
+export UV_UNMANAGED_INSTALL
+UV_EXE="${UV_UNMANAGED_INSTALL}/uv"
+if [[ "$(uname -m)" != "arm64" ]]; then
+  echo "[ERREUR] L'installation macOS requiert Apple Silicon (arm64)." >&2
   exit 1
 fi
-
-if [[ ! -x "${VENV_PYTHON}" ]]; then
-  echo "Création de l'environnement Python 3.11..."
-  "${UV_EXE}" venv --python 3.11 "${VENV_DIR}"
+unset PYTHONHOME PYTHONPATH VIRTUAL_ENV CONDA_PREFIX
+export UV_PYTHON_PREFERENCE=only-managed
+if [[ ! -x "${UV_EXE}" ]] || [[ "$("${UV_EXE}" --version | awk '{print $2}')" != "${UV_VERSION}" ]]; then
+  mkdir -p "${UV_UNMANAGED_INSTALL}"
+  curl --proto '=https' --tlsv1.2 -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh
 fi
-
-PYTHON_VERSION="$("${VENV_PYTHON}" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
-case "${PYTHON_VERSION}" in
-  3.11|3.12|3.13) ;;
-  *)
-    echo "[ERREUR] .venv utilise Python ${PYTHON_VERSION}; Python 3.11 à 3.13 est requis." >&2
-    echo "Déplacez l'ancien .venv hors du projet puis relancez ce script." >&2
-    exit 1
-    ;;
-esac
-
-HOST_ARCH="$(uname -m)"
-PYTHON_ARCH="$("${VENV_PYTHON}" -c 'import platform; print(platform.machine())')"
-if [[ "${HOST_ARCH}" == "arm64" && "${PYTHON_ARCH}" != "arm64" ]]; then
-  echo "[ERREUR] Le Mac est arm64 mais .venv utilise Python ${PYTHON_ARCH}." >&2
-  echo "Déplacez l'ancien .venv hors du projet puis relancez ce script." >&2
-  exit 1
-fi
-
-echo "Installation ou mise à jour du runtime GGUF Metal..."
-if ! "${UV_EXE}" pip install \
-  --python "${VENV_PYTHON}" \
-  --extra-index-url "${LLAMA_CPP_METAL_INDEX}" \
-  --only-binary llama-cpp-python \
-  --reinstall-package llama-cpp-python \
-  "llama-cpp-python>=0.3.16,<0.4"; then
-  echo "La wheel Metal n'a pas pu être installée ; compilation locale Metal..."
-  CMAKE_ARGS="-DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_APPLE_SILICON_PROCESSOR=arm64 -DGGML_METAL=ON -DGGML_ACCELERATE=ON" \
-    FORCE_CMAKE=1 \
-    "${UV_EXE}" pip install \
-      --python "${VENV_PYTHON}" \
-      --index-url "https://pypi.org/simple" \
-      --no-binary llama-cpp-python \
-      --no-cache \
-      "llama-cpp-python>=0.3.16,<0.4"
-fi
-
-PULID_PROJECT_SPEC=".[inference,pulid,server,embeddings]"
-PULID_EDITABLE_ARGS=()
-if [[ "${PULID_INSTALL_PROFILE}" == "development" ]]; then
-  PULID_PROJECT_SPEC=".[inference,pulid,server,embeddings,dev]"
-  PULID_EDITABLE_ARGS=(-e)
-fi
-
-echo "Installation ou mise à jour de PuLID (profil ${PULID_INSTALL_PROFILE})..."
-"${UV_EXE}" pip install \
-  --python "${VENV_PYTHON}" \
-  --extra-index-url "${LLAMA_CPP_METAL_INDEX}" \
-  --only-binary insightface \
-  --only-binary llama-cpp-python \
-  "${PULID_EDITABLE_ARGS[@]}" \
-  "${PULID_PROJECT_SPEC}"
+[[ "$("${UV_EXE}" --version | awk '{print $2}')" == "${UV_VERSION}" ]]
+"${UV_EXE}" python install "cpython-${PYTHON_VERSION}-macos-aarch64-none" --no-bin --no-registry --no-config
+MANAGED_PYTHON="${UV_PYTHON_INSTALL_DIR}/cpython-${PYTHON_VERSION}-macos-aarch64-none/bin/python3.11"
+"${MANAGED_PYTHON}" "${PROJECT_DIR}/scripts/install_environment.py" \
+  --uv "${UV_EXE}" --models-root "${PULID_MODELS_ROOT}" --profile "${PULID_INSTALL_PROFILE}"
+PYTHON_ARCH="arm64"
 
 echo
 echo "Installation ou réparation des modèles et configurations..."
-"${VENV_DIR}/bin/pulid-install" \
+"${VENV_PYTHON}" -m pulid_app.installer \
   --models-root "${PULID_MODELS_ROOT}" \
   --sdxl ask
 
 echo "Vérification des composants Python..."
 "${VENV_PYTHON}" -c "import diffusers, fastapi, llama_cpp, torch, transformers; info = llama_cpp.llama_print_system_info().decode(); assert 'MTL' in info, 'Backend Metal absent de llama-cpp-python'; print('Python', '${PYTHON_VERSION}', '-', '${PYTHON_ARCH}'); print('PyTorch', torch.__version__, '- MPS disponible :', torch.backends.mps.is_available()); print('llama-cpp-python', llama_cpp.__version__, '- Metal OK')"
-"${VENV_DIR}/bin/pulid-gen" --version
+"${VENV_PYTHON}" -m pulid_app.cli --version
 "${VENV_PYTHON}" -c "from pulid_app.config import load_config; config = load_config(); embedding = config.text_embedding; assert embedding is not None; assert embedding.checkpoint.is_file(), embedding.checkpoint; print('GGUF configuré :', embedding.checkpoint)"
-"${VENV_DIR}/bin/pulid-gen" doctor --allow-missing-sdxl
+"${VENV_PYTHON}" scripts/verify_text_embedding.py --device mps
+"${VENV_PYTHON}" -m pulid_app.cli doctor --allow-missing-sdxl
 "${VENV_PYTHON}" scripts/inspect_models.py \
   --show-cache-env \
   --fail-on-internal-cache \

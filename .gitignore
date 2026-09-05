@@ -40,3 +40,6 @@ cache/identity/*
 inputs/*
 !inputs/.gitkeep
 logs/
+
+# Precompiled runtime, bundled in release archives (not source control)
+runtime/wheels/*.whl

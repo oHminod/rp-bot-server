@@ -3,6 +3,9 @@ setlocal EnableExtensions
 
 set "PROJECT_DIR=%~dp0"
 set "PULID_PROJECT_ROOT=%PROJECT_DIR%"
+set "PYTHONHOME="
+set "PYTHONPATH="
+set "VIRTUAL_ENV="
 set "PULID_INSTALL_PROFILE=%PULID_INSTALL_PROFILE%"
 if not defined PULID_INSTALL_PROFILE set "PULID_INSTALL_PROFILE=development"
 set "PULID_CONFIGURE_NETWORK=0"
@@ -114,95 +117,20 @@ set "UV_CACHE_DIR=%PULID_MODELS_ROOT%\other\uv-windows"
 set "UV_PYTHON_INSTALL_DIR=%PULID_MODELS_ROOT%\other\uv-python-windows"
 set "NO_ALBUMENTATIONS_UPDATE=1"
 set "LLAMA_CPP_VERSION=0.3.35"
-set "LLAMA_CPP_CUDA_INDEX=https://abetlen.github.io/llama-cpp-python/whl/cu130"
-set "LLAMA_CPP_CPU_WHEEL=https://github.com/abetlen/llama-cpp-python/releases/download/v%LLAMA_CPP_VERSION%/llama_cpp_python-%LLAMA_CPP_VERSION%-py3-none-win_amd64.whl"
-set "LLAMA_CPP_CUDA_WHEEL=https://github.com/abetlen/llama-cpp-python/releases/download/v%LLAMA_CPP_VERSION%-cu130/llama_cpp_python-%LLAMA_CPP_VERSION%-py3-none-win_amd64.whl"
 set "LLAMA_CPP_PORTABLE_CPU_DLL_SHA256=cd91f4ed375998da4da57fedaab1b0638fba8b2af88e74a2632bc046e7fa4850"
-
-cd /d "%PROJECT_DIR%"
-
-echo Nettoyage des metadonnees macOS incompatibles avec Windows...
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$files = @(Get-ChildItem -LiteralPath $env:PULID_MODELS_ROOT -Recurse -Force -File -Filter '._*' -ErrorAction SilentlyContinue); if ($files.Count -gt 0) { Write-Host ('Suppression de ' + $files.Count + ' fichier(s) AppleDouble.'); $files | Remove-Item -Force -ErrorAction Stop }"
-if errorlevel 1 (
-    echo [ERREUR] Impossible de supprimer les fichiers AppleDouble sous :
-    echo   %PULID_MODELS_ROOT%
-    goto :error_exit
-)
-
-set "UV_EXE="
-for /f "delims=" %%I in ('where uv.exe 2^>nul') do if not defined UV_EXE set "UV_EXE=%%I"
-
-if not defined UV_EXE (
-    set "UV_INSTALL_DIR=%LOCALAPPDATA%\PuLID\uv\bin"
-    echo Installation de uv...
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm https://astral.sh/uv/install.ps1 | iex"
-    if errorlevel 1 (
-        echo [ERREUR] Impossible d'installer uv.
-        echo Installez-le manuellement puis relancez ce script :
-        echo   winget install --id=astral-sh.uv -e
-        goto :error_exit
-    )
-    set "UV_EXE=%LOCALAPPDATA%\PuLID\uv\bin\uv.exe"
-)
-
-if not exist "%UV_EXE%" (
-    echo [ERREUR] Executable uv introuvable : %UV_EXE%
-    goto :error_exit
-)
-
 set "VENV_PYTHON=%PROJECT_DIR%.venv\Scripts\python.exe"
-if not exist "%VENV_PYTHON%" (
-    echo Creation de l'environnement Python 3.11...
-    "%UV_EXE%" venv --python 3.11 "%PROJECT_DIR%.venv"
-    if errorlevel 1 goto :venv_error
-)
-
 set "TORCH_DLL_DIR=%PROJECT_DIR%.venv\Lib\site-packages\torch\lib"
 set "LLAMA_CPP_LIB_DIR=%PROJECT_DIR%.venv\Lib\site-packages\llama_cpp\lib"
-set "LLAMA_CPP_PORTABLE_DIR=%PROJECT_DIR%.venv\pulid-runtime\llama-cpp-%LLAMA_CPP_VERSION%"
-set "LLAMA_CPP_PORTABLE_CPU_DLL=%LLAMA_CPP_PORTABLE_DIR%\ggml-cpu.dll"
 set "PATH=%TORCH_DLL_DIR%;%PATH%"
+cd /d "%PROJECT_DIR%"
 
-echo Installation de PyTorch 2.13 avec CUDA 13.0...
-"%UV_EXE%" pip install --python "%VENV_PYTHON%" "torch==2.13.0" "torchvision==0.28.0" --index-url "https://download.pytorch.org/whl/cu130"
-if errorlevel 1 goto :dependency_error
-
-echo Preparation du backend CPU portable de llama-cpp-python %LLAMA_CPP_VERSION%...
-"%UV_EXE%" pip install --python "%VENV_PYTHON%" --reinstall-package llama-cpp-python "%LLAMA_CPP_CPU_WHEEL%"
-if errorlevel 1 goto :dependency_error
-
-if not exist "%LLAMA_CPP_PORTABLE_DIR%\" mkdir "%LLAMA_CPP_PORTABLE_DIR%"
-if errorlevel 1 goto :llama_portable_error
-
-if not exist "%LLAMA_CPP_LIB_DIR%\ggml-cpu.dll" goto :llama_portable_error
-copy /Y "%LLAMA_CPP_LIB_DIR%\ggml-cpu.dll" "%LLAMA_CPP_PORTABLE_CPU_DLL%" >nul
-if errorlevel 1 goto :llama_portable_error
-
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $env:LLAMA_CPP_PORTABLE_CPU_DLL).Hash.ToLowerInvariant(); if ($actual -ne $env:LLAMA_CPP_PORTABLE_CPU_DLL_SHA256) { Write-Error ('Empreinte ggml-cpu.dll inattendue : ' + $actual); exit 1 }"
-if errorlevel 1 goto :llama_portable_error
-
-echo Installation du runtime GGUF CUDA 13.0 pour les embeddings...
-"%UV_EXE%" pip install --python "%VENV_PYTHON%" --reinstall-package llama-cpp-python "%LLAMA_CPP_CUDA_WHEEL%"
-if errorlevel 1 goto :dependency_error
-
-if not exist "%LLAMA_CPP_LIB_DIR%\ggml-cuda.dll" goto :llama_cuda_error
-copy /Y "%LLAMA_CPP_PORTABLE_CPU_DLL%" "%LLAMA_CPP_LIB_DIR%\ggml-cpu.dll" >nul
-if errorlevel 1 goto :llama_portable_error
-
-set "PULID_PROJECT_SPEC=.[inference,pulid,server,embeddings]"
-set "PULID_EDITABLE_FLAG="
-if /I "%PULID_INSTALL_PROFILE%"=="development" (
-    set "PULID_PROJECT_SPEC=.[inference,pulid,server,embeddings,dev]"
-    set "PULID_EDITABLE_FLAG=-e"
-)
-
-echo Installation de PuLID et du serveur HTTP ^(profil %PULID_INSTALL_PROFILE%^)...
-"%UV_EXE%" pip install --python "%VENV_PYTHON%" --extra-index-url "%LLAMA_CPP_CUDA_INDEX%" --only-binary insightface --only-binary llama-cpp-python %PULID_EDITABLE_FLAG% "%PULID_PROJECT_SPEC%"
+echo Installation de Python gere et recreation de .venv depuis uv.lock...
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PROJECT_DIR%scripts\bootstrap_windows.ps1"
 if errorlevel 1 goto :dependency_error
 
 echo.
 echo Installation ou reparation des modeles et configurations...
-"%PROJECT_DIR%.venv\Scripts\pulid-install.exe" --models-root "%PULID_MODELS_ROOT%" --sdxl ask
+"%VENV_PYTHON%" -m pulid_app.installer --models-root "%PULID_MODELS_ROOT%" --sdxl ask
 if errorlevel 1 goto :model_install_error
 
 echo Verification de CUDA...
@@ -221,7 +149,7 @@ echo Verification du chargement et du calcul BGE-M3 sur CUDA...
 if errorlevel 1 goto :llama_context_error
 
 echo Verification de l'installation et des modeles...
-"%PROJECT_DIR%.venv\Scripts\pulid-gen.exe" doctor --allow-missing-sdxl
+"%VENV_PYTHON%" -m pulid_app.cli doctor --allow-missing-sdxl
 if errorlevel 1 goto :validation_error
 
 "%VENV_PYTHON%" "%PROJECT_DIR%scripts\inspect_models.py" --show-cache-env --fail-on-internal-cache --allow-missing-sdxl
@@ -275,10 +203,6 @@ echo.
 echo Appuyez sur une touche pour fermer cette fenetre.
 pause >nul
 exit /b 0
-
-:venv_error
-echo [ERREUR] Impossible de creer l'environnement Python 3.11.
-goto :error_exit
 
 :dependency_error
 echo [ERREUR] Installation des dependances impossible.

@@ -15,10 +15,18 @@ if /I "%~1"=="--network" (
 
 cd /d "%PROJECT_DIR%"
 
-set "SERVER_EXE=%PROJECT_DIR%.venv\Scripts\pulid-server.exe"
-if not exist "%SERVER_EXE%" (
+set "SERVER_PYTHON=%PROJECT_DIR%.venv\Scripts\python.exe"
+if not exist "%SERVER_PYTHON%" (
     echo [ERREUR] Serveur PuLID non installe.
     echo Executez d'abord : install_windows.bat
+    exit /b 1
+)
+
+set "PYTHONHOME="
+set "PYTHONPATH="
+"%SERVER_PYTHON%" "%PROJECT_DIR%scripts\check_environment.py"
+if errorlevel 1 (
+    echo [ERREUR] Python inutilisable ou dossier deplace. Relancez install_windows.bat.
     exit /b 1
 )
 
@@ -32,5 +40,5 @@ echo.
 echo Arret du serveur : Ctrl+C
 echo.
 
-"%SERVER_EXE%" --host %SERVER_HOST% --port 12693 --device cuda --dtype float16 --offload none %SERVER_CORS% %*
+"%SERVER_PYTHON%" -m pulid_app.server --host %SERVER_HOST% --port 12693 --device cuda --dtype float16 --offload none %SERVER_CORS% %*
 exit /b %ERRORLEVEL%

@@ -49,8 +49,8 @@ le CPU. Sur macOS, la détection faciale InsightFace reste exécutée sur CPU.
 ### Prérequis
 
 - une connexion Internet lors de la première installation ;
-- Python 3.11 à 3.13, installé automatiquement par les scripts si nécessaire ;
-- sur macOS, un Mac Apple Silicon ;
+- aucun Python, uv ni compilateur à préinstaller ;
+- sur macOS, un Mac Apple Silicon avec macOS 14 ou supérieur ;
 - sous Windows, un GPU NVIDIA et un pilote compatible avec CUDA 13 ;
 - au moins 20 Go disponibles, davantage si plusieurs checkpoints SDXL sont
   installés.
@@ -71,7 +71,7 @@ Pour développer PuLID, cloner le dépôt :
 Dans un terminal :
 
 ```bash
-git clone https://github.com/oHminod/PuLID.git
+git clone --branch dev https://github.com/oHminod/PuLID.git
 cd PuLID
 ```
 
@@ -81,7 +81,9 @@ sans historique Git, tests, caches, configurations locales ni modèles.
 
 ### 2. Installer sur macOS
 
-Depuis un clone de développement :
+Depuis un clone de développement, ajouter d’abord la wheel Metal et son manifeste
+issus de la même archive PuLID sous `runtime/wheels/` (ou la construire suivant
+[RELEASE.md](RELEASE.md)). La wheel n’est pas versionnée dans Git.
 
 ```bash
 ./install_macos.sh
@@ -149,9 +151,31 @@ l’installateur le demande, ou acceptez le téléchargement de SDXL Base 1.0. P
 l’ajouter ultérieurement, déposez le fichier dans ce même dossier puis relancez
 le script d’installation.
 
-L’installation est réparable et idempotente : relancer le script de votre
-plateforme vérifie les fichiers présents et ne récupère que ce qui manque ou ce
-qui est invalide.
+L’installation recrée systématiquement `.venv` ; fermer le serveur avant de la
+relancer. Les modèles valides restent réutilisés. Python **3.11.16** est toujours
+installé par uv **0.12.10** dans `PuLID_models/other/uv-python-<plateforme>` ;
+les outils du PATH et le Python système ne sont jamais choisis. Le chemin utilisé
+contient la version complète, sans dépendre de la jonction mineure `cpython-3.11-*`.
+Les binaires uv sont également propres à PuLID, sous `other/uv-<plateforme>-bin`.
+
+`uv.lock` fixe les dépendances directes, indirectes et de construction, leurs
+sources et SHA-256. Windows utilise PyTorch 2.13.0+cu130, Torchvision 0.28.0+cu130
+et llama-cpp-python 0.3.35 CUDA 13.0 avec la DLL CPU portable vérifiée. macOS utilise
+notre wheel llama-cpp-python 0.3.35 précompilée avec Metal, fournie dans l’archive.
+L’installateur ne résout rien de nouveau (`uv sync --frozen`) et vérifie d’abord
+que le manifeste lie bien le verrou au `pyproject.toml`, aux versions des outils
+et au manifeste de la wheel. Les outils de construction Python sont eux aussi
+verrouillés ; aucun compilateur C/C++ n’est utilisé sur le poste utilisateur.
+
+BGE tourne sur GPU Metal avec `n_gpu_layers=-1` sur macOS. Une wheel sans le
+backend GPU requis provoque une erreur explicite, sans repli CPU automatique.
+Le mode CPU explicite reste disponible ; InsightFace/ONNX peut rester sur CPU.
+
+Après déplacement de PuLID, relancer l’installateur pour reconstruire `.venv` et
+ses chemins. Le lanceur détecte un environnement déplacé ou périmé et indique
+cette réparation. Un `models_root` interne au projet est enregistré en relatif.
+La [recette Windows](WINDOWS_INSTALL_TEST.md) fournit les commandes Git, le test
+sans outils préinstallés, la reproduction d’une jonction cassée et le déplacement.
 
 ## Utilisation avec rp-bot
 
@@ -343,21 +367,20 @@ et reconstruire les index LanceDB est détaillée dans
 
 ## Vérifier l’installation
 
-Les scripts de démarrage activent automatiquement l’environnement virtuel. Pour
-utiliser les commandes directement sur macOS ou Linux :
+Les lanceurs appellent directement le Python de `.venv`, après contrôle de sa
+provenance et des chemins. Pour vérifier l’installation macOS :
 
 ```bash
-source .venv/bin/activate
-pulid-gen --version
-pulid-gen doctor
-pulid-gen inspect-models --show-cache-env --fail-on-internal-cache
+.venv/bin/python scripts/check_environment.py
+.venv/bin/python -m pulid_app.cli doctor --allow-missing-sdxl
+.venv/bin/python scripts/inspect_models.py --show-cache-env --fail-on-internal-cache --allow-missing-sdxl
 ```
 
 Sous Windows :
 
 ```bat
-.venv\Scripts\pulid-gen.exe --version
-.venv\Scripts\pulid-gen.exe doctor
+.venv\Scripts\python.exe scripts\check_environment.py
+.venv\Scripts\python.exe -m pulid_app.cli doctor --allow-missing-sdxl
 ```
 
 `doctor` contrôle les checkpoints, les modèles de visage, PuLID, BGE-M3, les

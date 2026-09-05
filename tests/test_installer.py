@@ -373,3 +373,34 @@ def test_validate_sdxl_config_tree_rejects_missing_files_and_weights(
     (tmp_path / "unet" / "weights.safetensors").write_bytes(b"weights")
     with pytest.raises(InstallerError, match="poids"):
         validate_sdxl_config_tree(tmp_path)
+
+
+def test_local_models_root_is_portable_after_project_move(tmp_path, monkeypatch):
+    import shutil
+    from pulid_app.config import load_config
+    root = tmp_path / 'original'
+    (root / 'config').mkdir(parents=True)
+    models = root / 'models' / 'PuLID_models'
+    models.mkdir(parents=True)
+    default = root / 'config/default.yaml'
+    default.write_text('''models_root: ignored
+sdxl:
+  checkpoint: checkpoints/absent.safetensors
+pulid:
+  checkpoint: pulid.safetensors
+insightface:
+  model_root: .
+  model_name: antelopev2
+outputs_dir: outputs
+identity_cache_dir: cache/identity
+''')
+    destination = root / 'config/local.yaml'
+    write_local_config(models, None, default_config=default, destination=destination, project_root=root)
+    assert yaml.safe_load(destination.read_text())['models_root'] == 'models/PuLID_models'
+    moved = tmp_path / 'moved with spaces'
+    shutil.move(root, moved)
+    monkeypatch.setattr('pulid_app.config.PROJECT_ROOT', moved)
+    monkeypatch.delenv('PULID_MODELS_ROOT', raising=False)
+    loaded = load_config(moved / 'config/local.yaml')
+    assert loaded.models_root == moved / 'models/PuLID_models'
+    assert not loaded.sdxl.checkpoint.exists()

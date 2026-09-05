@@ -696,3 +696,13 @@ Les erreurs de validation FastAPI utilisent un tableau standard dans `detail`.
 Une génération peut prendre plusieurs dizaines de secondes. Le proxy ou le
 client HTTP du frontend doit utiliser un timeout adapté, par exemple deux à cinq
 minutes selon le matériel et le nombre de steps.
+
+### Runtime BGE et disponibilité sans SDXL
+
+Le démarrage et les routes de supervision restent disponibles sans checkpoint
+SDXL. L’inventaire récursif du CLI n’intervient pas dans le démarrage du backend.
+Sur macOS, le lanceur demande BGE sur GPU Metal ; si la wheel installée ne fournit
+pas le backend GPU demandé, le chargement produit une `ModelLoadError` via la
+gestion d’erreur existante des embeddings, sans repli CPU silencieux. Réinstaller
+PuLID depuis une archive complète restaure la wheel Metal précompilée. Les routes,
+corps, en-têtes et formats d’erreur existants restent identiques.

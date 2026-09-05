@@ -191,9 +191,18 @@ def load_llama_cpp_embedding_model(
 
     try:
         with _cuda_dll_search_path(device_type):
-            from llama_cpp import Llama
+            import llama_cpp
 
-            return Llama(
+            if uses_accelerator:
+                info = llama_cpp.llama_print_system_info().decode()
+                backend = "MTL" if device_type == "mps" else "CUDA"
+                if not llama_cpp.llama_supports_gpu_offload() or backend not in info:
+                    raise ModelLoadError(
+                        f"Backend {backend} absent de llama-cpp-python pour {checkpoint}. "
+                        "Relancez l'installateur PuLID pour restaurer la wheel GPU. "
+                        "Aucun repli CPU automatique n'est effectué."
+                    )
+            return llama_cpp.Llama(
                 **llama_options,
             )
     except ImportError as exc:

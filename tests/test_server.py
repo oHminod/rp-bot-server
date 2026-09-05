@@ -1176,3 +1176,30 @@ def test_configured_cors_origin_can_call_frontend_endpoints(tmp_path: Path) -> N
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
     assert "POST" in response.headers["access-control-allow-methods"]
+
+
+def test_server_starts_without_sdxl_and_ignores_broken_uv_tree(tmp_path):
+    from fastapi.testclient import TestClient
+    config, models = _write_config(tmp_path)
+    for checkpoint in (models / 'checkpoints').iterdir():
+        checkpoint.unlink()
+    runtime = models / 'other' / 'uv-python-windows'
+    runtime.mkdir(parents=True)
+    try:
+        (runtime / 'cpython-3.11-windows-x86_64-none').symlink_to(
+            runtime / 'missing', target_is_directory=True,
+        )
+    except OSError:
+        pass  # The independent traversal tests cover denied symlink creation.
+
+    def forbidden_load(*args, **kwargs):
+        raise AssertionError('Startup and catalog must not load any model')
+
+    app = create_app(config, device='cpu', embedding_memory_mode='cpu',
+                     generator_factory=forbidden_load, embedding_model_factory=forbidden_load)
+    with TestClient(app) as client:
+        response = client.get('/health')
+        assert response.status_code == 200
+        response = client.get('/models')
+        assert response.status_code == 200
+        assert response.json()['models'] == []

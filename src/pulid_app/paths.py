@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
+import stat
 from pathlib import Path
 import tempfile
 from typing import Mapping
@@ -29,6 +30,7 @@ class ModelInventory:
     antelope_dir: Path | None
     antelope_missing_files: tuple[str, ...]
     sdxl_candidates: tuple[Path, ...]
+    warnings: tuple[str, ...] = ()
 
 
 def external_cache_paths(models_root: Path) -> dict[str, Path]:
@@ -88,46 +90,95 @@ def _unique_sorted(paths: list[Path]) -> tuple[Path, ...]:
     return tuple(sorted(set(paths), key=lambda item: str(item).casefold()))
 
 
+def _technical_directory(name: str) -> bool:
+    lowered = name.casefold()
+    return lowered in {".git", ".venv", "venv", "__pycache__", "node_modules", "uv"} or lowered.startswith(
+        ("uv-", "cpython-", "pypy-")
+    )
+
+
+def _inventory_tree(root: Path, warnings: list[str]) -> tuple[list[Path], list[Path]]:
+    """Walk once, pruning runtimes and never following directory reparse points.
+
+    Python 3.11 rglob can raise on broken Windows junctions. Catch errors at
+    each directory/entry so a disappearing or inaccessible sibling is harmless.
+    File symlinks (e.g. Hugging Face snapshots) remain valid model candidates.
+    """
+    files: list[Path] = []
+    directories: list[Path] = []
+    pending = [root]
+    while pending:
+        directory = pending.pop()
+        try:
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    path = Path(entry.path)
+                    if _technical_directory(entry.name):
+                        continue
+                    try:
+                        metadata = entry.stat(follow_symlinks=False)
+                        is_reparse = bool(
+                            getattr(metadata, "st_file_attributes", 0)
+                            & stat.FILE_ATTRIBUTE_REPARSE_POINT
+                        )
+                        if stat.S_ISDIR(metadata.st_mode):
+                            if not is_reparse:
+                                directories.append(path)
+                                pending.append(path)
+                        elif entry.is_file():
+                            files.append(path)
+                    except OSError as exc:
+                        warnings.append(f"Entrée ignorée : {path} ({exc})")
+        except OSError as exc:
+            warnings.append(f"Dossier non parcouru : {directory} ({exc})")
+    return files, directories
+
+
 def inspect_models(config: AppConfig) -> ModelInventory:
-    """Inventorie les modèles locaux sans les charger ni accéder au réseau."""
+    """Inventorie les modèles locaux sans charger ni modifier les runtimes."""
+    warnings: list[str] = []
 
-    root = config.models_root
-    if not root.is_dir():
-        return ModelInventory((), None, (), ())
+    def is_file(path: Path) -> bool:
+        try:
+            return path.is_file()
+        except OSError as exc:
+            warnings.append(f"Fichier inaccessible : {path} ({exc})")
+            return False
 
-    safetensors = list(root.rglob("*.safetensors"))
-
+    files, directories = _inventory_tree(config.models_root, warnings)
+    safetensors = [p for p in files if p.suffix.casefold() == ".safetensors"]
     pulid_paths = [path for path in safetensors if "pulid" in path.name.casefold()]
-    if config.pulid.checkpoint.is_file():
+    if is_file(config.pulid.checkpoint):
         pulid_paths.append(config.pulid.checkpoint)
-
     sdxl_paths = [
-        path
-        for path in safetensors
+        path for path in safetensors
         if "pulid" not in path.name.casefold()
         and "vae" not in path.name.casefold().replace("bakedvae", "")
     ]
-    if config.sdxl.checkpoint.is_file():
+    if is_file(config.sdxl.checkpoint):
         sdxl_paths.append(config.sdxl.checkpoint)
 
     antelope_dir = config.insightface.model_dir
-    if not antelope_dir.is_dir():
+    try:
+        configured_antelope_exists = antelope_dir.is_dir()
+    except OSError as exc:
+        warnings.append(f"AntelopeV2 inaccessible : {antelope_dir} ({exc})")
+        configured_antelope_exists = False
+    if not configured_antelope_exists:
         matches = sorted(
-            (path for path in root.rglob(config.insightface.model_name) if path.is_dir()),
+            (p for p in directories if p.name == config.insightface.model_name),
             key=lambda item: str(item).casefold(),
         )
         antelope_dir = matches[0] if matches else None
-
-    missing: tuple[str, ...] = ()
-    if antelope_dir is not None:
-        present = {path.name for path in antelope_dir.glob("*.onnx")}
-        missing = tuple(sorted(ANTELOPEV2_REQUIRED_FILES - present))
-
+    missing = tuple(
+        sorted(name for name in ANTELOPEV2_REQUIRED_FILES if not is_file(antelope_dir / name))
+    ) if antelope_dir is not None else ()
     return ModelInventory(
         pulid_checkpoints=_unique_sorted(pulid_paths),
         antelope_dir=antelope_dir,
         antelope_missing_files=missing,
         sdxl_candidates=_unique_sorted(sdxl_paths),
+        warnings=tuple(warnings),
     )
 
 

@@ -101,3 +101,88 @@ def test_configured_cache_env_is_accepted(tmp_path: Path) -> None:
     configured = configure_external_model_caches(models_root)
 
     assert cache_env_violations(models_root, configured) == ()
+
+
+def test_inventory_prunes_uv_runtimes_before_scanning(tmp_path, monkeypatch):
+    import os
+    config = _config(tmp_path)
+    technical = config.models_root / 'other' / 'uv-python-windows'
+    broken = technical / 'cpython-3.11-windows-x86_64-none'
+    broken.mkdir(parents=True)
+    config.sdxl.checkpoint.parent.mkdir()
+    config.sdxl.checkpoint.touch()
+    original = os.scandir
+
+    def guarded_scandir(path):
+        if Path(path).is_relative_to(technical):
+            raise AssertionError('uv/Python must not be traversed')
+        return original(path)
+
+    monkeypatch.setattr(os, 'scandir', guarded_scandir)
+    inventory = inspect_models(config)
+    assert inventory.sdxl_candidates == (config.sdxl.checkpoint,)
+    assert not inventory.warnings
+
+
+def test_inventory_reports_disappearing_directory_and_keeps_siblings(tmp_path, monkeypatch):
+    import os
+    config = _config(tmp_path)
+    lost = config.models_root / 'disappearing'
+    lost.mkdir(parents=True)
+    config.sdxl.checkpoint.parent.mkdir()
+    config.sdxl.checkpoint.touch()
+    original = os.scandir
+
+    def broken_scandir(path):
+        if Path(path) == lost:
+            raise FileNotFoundError(3, 'WinError 3: path not found', str(path))
+        return original(path)
+
+    monkeypatch.setattr(os, 'scandir', broken_scandir)
+    inventory = inspect_models(config)
+    assert inventory.sdxl_candidates == (config.sdxl.checkpoint,)
+    assert str(lost) in inventory.warnings[0]
+
+
+def test_inventory_skips_directory_symlinks_but_accepts_model_file_symlinks(tmp_path):
+    import pytest
+    config = _config(tmp_path)
+    config.models_root.mkdir()
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    (outside / 'unexpected.safetensors').touch()
+    target = outside / 'linked.safetensors'
+    target.touch()
+    link = config.models_root / 'linked.safetensors'
+    try:
+        (config.models_root / 'cycle').symlink_to(config.models_root, target_is_directory=True)
+        (config.models_root / 'outside').symlink_to(outside, target_is_directory=True)
+        (config.models_root / 'broken').symlink_to(tmp_path / 'absent', target_is_directory=True)
+        link.symlink_to(target)
+    except OSError:
+        pytest.skip('Symlink creation requires permission on this host')
+    assert inspect_models(config).sdxl_candidates == (link,)
+
+
+def test_inventory_prunes_windows_junction_attributes(tmp_path, monkeypatch):
+    import os
+    import stat
+    from types import SimpleNamespace
+    config = _config(tmp_path)
+    config.models_root.mkdir()
+    junction = config.models_root / 'junction'
+    junction.mkdir()
+    (junction / 'hidden.safetensors').touch()
+    original = os.scandir
+
+    class FakeScan:
+        def __enter__(self):
+            return iter([SimpleNamespace(
+                name='junction', path=str(junction),
+                stat=lambda **kwargs: SimpleNamespace(st_mode=stat.S_IFDIR, st_file_attributes=stat.FILE_ATTRIBUTE_REPARSE_POINT),
+            )])
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr(os, 'scandir', lambda path: FakeScan() if Path(path) == config.models_root else original(path))
+    assert inspect_models(config).sdxl_candidates == ()
