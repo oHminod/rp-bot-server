@@ -10,6 +10,25 @@ distribution reste identifié par `pulid` dans `rp-bot`.
 sa racine, `release-metadata.json` et les commandes de construction lisent tous
 `project.version`; aucune version applicative n’est recopiée dans les scripts.
 
+## Version 0.1.1
+
+Prérelease MVP non signée, dans la continuité de 0.1.0. Elle distribue le Python
+géré 3.11.16 via uv 0.12.10, le verrou complet des dépendances et la wheel
+`llama-cpp-python` 0.3.35 précompilée avec Metal pour macOS arm64. Python et les
+paquets verrouillés sont téléchargés à l'installation ; la wheel Metal est
+incluse dans l'archive. Aucun poids de modèle n'est embarqué.
+
+Cette version inclut l'isolation des installations globales, la préparation du
+runtime après déplacement, le correctif du trampoline Windows et l'inventaire
+tolérant aux dossiers techniques ou liens invalides. L'installation et le
+démarrage sans SDXL sont conservés. Le contrat HTTP reste en version 1.0.0.
+
+Validation avant publication : 268 tests réussis, 4 ignorés (trois intégrations
+lourdes et un test nécessitant Windows natif). Les validations matérielles de
+la session sont détaillées ci-dessous ; le test utilisateur Windows a confirmé
+l'installation et BGE CUDA sur RTX 4070 SUPER, puis le bon fonctionnement après
+le correctif de déplacement. La cause du WinError 3 initial reste non confirmée.
+
 ## Construire les artefacts
 
 Depuis un clone ou depuis une précédente archive extraite :

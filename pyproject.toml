@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pulid-app"
-version = "0.1.0"
+version = "0.1.1"
 description = "Pipeline Python autonome pour PuLID et SDXL"
 readme = "README.md"
 requires-python = "==3.11.16"
