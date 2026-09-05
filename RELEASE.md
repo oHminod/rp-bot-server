@@ -229,3 +229,53 @@ Le démarrage du Python Windows et les DLL CUDA après déplacement restent à v
 sur Windows natif. Le déplacement entre
 OS/architectures et celui indépendant d’un dossier de modèles externe ne sont pas
 pris en charge automatiquement.
+
+## Correctif du trampoline Windows après déplacement
+
+Le test Windows utilisateur du commit `1696690e1019afe7b9170c065e4646509b80d68e`
+valide l'installation complète sans SDXL, Python géré 3.11.16, uv 0.12.10,
+PyTorch 2.13.0+cu130, le calcul BGE CUDA (1024 dimensions, contexte 8192), doctor,
+l'inventaire et le premier démarrage réseau sur RTX 4070 SUPER. Après déplacement,
+le démarrage échoue avec `uv trampoline failed to spawn Python child process`.
+Ce nouvel échec est distinct du parcours d'inventaire : celui-ci réussit dans le log.
+La cause exacte du WinError 3 initial chez l'autre utilisateur reste non confirmée.
+
+Dans [uv 0.12.10](https://github.com/astral-sh/uv/blob/0.12.10/crates/uv-virtualenv/src/virtualenv.rs),
+le lanceur Windows peut être un trampoline vers la jonction Python mineure.
+Son chemin est intégré à l'exécutable ; réécrire `home` dans `pyvenv.cfg` ne suffit
+pas. Les tests précédents de déplacement utilisaient `venv.EnvBuilder` et ne
+couvraient pas ce trampoline uv.
+
+La préparation du runtime installe désormais les deux redirecteurs CPython du
+Python géré (`Lib/venv/scripts/nt/python.exe` et `pythonw.exe`) dans `.venv/Scripts`.
+Leur [mode VENV_REDIRECT](https://github.com/python/cpython/blob/v3.11.16/PC/launcher.c)
+lit `home` dans `pyvenv.cfg`. Les alias `python3.exe`/`python3.11.exe` existants
+sont corrigés aussi. Les binaires identiques sont conservés sans réécriture.
+L'absence d'un redirecteur embarqué provoque une erreur avant la réparation ;
+aucun Python, DLL ou lanceur système n'est utilisé. La migration des anciennes
+installations quitte d'abord le trampoline avant de le remplacer, car Windows
+verrouille les exécutables en cours d'utilisation.
+
+Contrôle local : l'archive Windows Python 3.11.16 du build standalone 20260901 a
+été téléchargée dans `/tmp` et son SHA-256 vérifié contre les métadonnées uv
+0.12.10. Elle contient bien les deux redirecteurs ; leur copie a été vérifiée
+octet par octet. Les tests couvrent le remplacement, les alias, l'absence de
+redirecteur, la conservation des exécutables déjà corrects et les chemins internes
+ou externes. Aucun binaire Windows n'a été exécuté sur macOS.
+Suite locale : **267 tests réussis, 4 ignorés** (trois intégrations lourdes et le
+nouveau test Windows natif). La migration PowerShell a également été exécutée
+avec PowerShell 7.5.2 portable pour vérifier que la réparation démarre depuis le
+Python géré après avoir quitté le processus `.venv`.
+
+Un test natif optionnel reproduit un trampoline uv cassé, déplace une copie privée
+du Python géré, puis vérifie deux démarrages après déplacement, l'isolation et la
+conservation de `.venv`. Sous Windows, depuis l'installation de développement :
+
+```powershell
+$env:PULID_TEST_UV = (Resolve-Path .\PuLID_models\other\uv-windows-bin\uv.exe).Path
+.\.venv\Scripts\python.exe -I -m pytest -q tests/test_windows_runtime_native.py
+```
+
+Adapter seulement le chemin uv si les modèles sont externes. Ce test est sans
+réseau ni modèle et requiert quelques centaines de Mo temporaires. La réparation
+native et le redémarrage BGE CUDA après déplacement restent à valider sur Windows.

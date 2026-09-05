@@ -37,6 +37,11 @@ def test_repair_rebases_internal_python_and_preserves_external_python(tmp_path, 
     python = (tmp_path / 'external' if external else root / 'models') / ('python.exe' if windows else 'bin/python3.11')
     python.parent.mkdir(parents=True)
     python.touch()
+    if windows:
+        bundled = python.parent / 'Lib/venv/scripts/nt'
+        bundled.mkdir(parents=True)
+        for name in ('python.exe', 'pythonw.exe'):
+            (bundled / name).write_bytes(b'MZ CPython redirector fixture ' + name.encode())
     state_fixture(root, python, 'development')
     config = root / '.venv/pyvenv.cfg'
     config.write_text(f'home = {python.parent}\ninclude-system-site-packages = false\n')
@@ -45,6 +50,11 @@ def test_repair_rebases_internal_python_and_preserves_external_python(tmp_path, 
     packages.mkdir(parents=True)
     (packages / '_pulid_app.pth').write_text(str(root / 'src'))
     (root / '.venv/bin').mkdir()
+    if windows:
+        scripts = root / '.venv/Scripts'
+        scripts.mkdir()
+        for name in ('python.exe', 'pythonw.exe', 'python3.exe', 'python3.11.exe'):
+            (scripts / name).write_bytes(b'MZ uv trampoline to old absolute path')
     moved = tmp_path / 'déplacé avec espaces'
     root.rename(moved)
     managed = python if external else moved / python.relative_to(root)
@@ -61,7 +71,13 @@ def test_repair_rebases_internal_python_and_preserves_external_python(tmp_path, 
     assert (packages / (packages / '_pulid_app.pth').read_text().strip()).resolve() == moved / 'src'
     if not windows:
         assert (moved / '.venv/bin/python').resolve() == managed
+    else:
+        for name in ('python.exe', 'python3.exe', 'python3.11.exe'):
+            assert (moved / '.venv/Scripts' / name).read_bytes() == (managed.parent / 'Lib/venv/scripts/nt/python.exe').read_bytes()
+        assert (moved / '.venv/Scripts/pythonw.exe').read_bytes() == (managed.parent / 'Lib/venv/scripts/nt/pythonw.exe').read_bytes()
     paths = [moved / '.venv' / name for name in ('pyvenv.cfg', 'pulid-runtime.json', 'pulid-python-path')]
+    if windows:
+        paths.extend((moved / '.venv/Scripts').glob('*.exe'))
     mtimes = [p.stat().st_mtime_ns for p in paths]
     check_environment.prepare_environment(moved)
     assert [p.stat().st_mtime_ns for p in paths] == mtimes
@@ -84,6 +100,20 @@ def test_repair_refuses_incompatible_environment_before_mutation(tmp_path, monke
     else:
         monkeypatch.setattr(sys, '_base_executable', str(tmp_path / 'global/python'))
     with pytest.raises(ValueError):
+        check_environment.prepare_environment(tmp_path)
+    assert config.read_text() == 'sentinel'
+
+
+def test_missing_bundled_windows_launcher_fails_before_repair(tmp_path, monkeypatch):
+    python = tmp_path / 'managed/python.exe'
+    python.parent.mkdir()
+    python.touch()
+    state_fixture(tmp_path, python)
+    config = tmp_path / '.venv/pyvenv.cfg'
+    config.write_text('sentinel')
+    monkeypatch.setattr(sys, 'platform', 'win32')
+    monkeypatch.setattr(sys, '_base_executable', str(python))
+    with pytest.raises(ValueError, match='Lanceur CPython géré absent'):
         check_environment.prepare_environment(tmp_path)
     assert config.read_text() == 'sentinel'
 
@@ -153,3 +183,29 @@ def test_powershell_runtime_pointer_and_native_exit(tmp_path, relative, exit_cod
     assert result.returncode == exit_code, result.stderr
     assert '-I' in result.stdout and '--prepare' in result.stdout
     assert str(root / 'scripts/check_environment.py') in result.stdout
+
+
+def test_powershell_migration_leaves_venv_before_repair(tmp_path):
+    powershell = os.environ.get('PULID_TEST_POWERSHELL') or shutil.which('powershell.exe') or shutil.which('pwsh')
+    if not powershell:
+        pytest.skip('PowerShell unavailable')
+    root = tmp_path / 'ancienne installation'
+    venv.EnvBuilder(with_pip=False).create(root / '.venv')
+    if os.name != 'nt':
+        import shlex
+        (root / '.venv/Scripts').mkdir()
+        wrapper = root / '.venv/Scripts/python.exe'
+        wrapper.write_text('#!/bin/sh\nexec ' + shlex.quote(str(root / '.venv/bin/python')) + ' "$@"\n')
+        wrapper.chmod(0o755)
+    (root / 'scripts').mkdir()
+    (root / 'scripts/check_environment.py').write_text(
+        'import sys\nfrom pathlib import Path\n'
+        'assert sys.flags.isolated\n'
+        f'assert not Path(sys.executable).is_relative_to({str(root)!r})\n'
+        'assert sys.argv[1:] == ["--prepare"]\n'
+        'print("DIRECT_MANAGED_REPAIR_OK")\n'
+    )
+    result = subprocess.run([powershell, '-NoProfile', '-File', str(ROOT / 'scripts/prepare_runtime_windows.ps1'),
+                             '-ProjectRoot', str(root)], cwd=tmp_path, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'DIRECT_MANAGED_REPAIR_OK' in result.stdout

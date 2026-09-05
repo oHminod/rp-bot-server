@@ -184,7 +184,10 @@ PuLID peut être déplacé **sans réinstallation** : arrêtez le backend et le
 frontend, déplacez le dossier complet (y compris `.venv` et `PuLID_models`), puis
 utilisez les lanceurs habituels. Ils retrouvent le Python géré et réajustent
 localement `pyvenv.cfg`, le lien Python macOS et le chemin des sources en mode
-développement. Aucun appel à uv, téléchargement ou changement de dépendances
+développement. Sur Windows, les lanceurs `python.exe` et `pythonw.exe` de `.venv`
+proviennent du dossier `Lib/venv/scripts/nt` du Python géré : ils lisent `pyvenv.cfg`
+et remplacent les trampolines uv contenant un ancien chemin absolu. Aucun appel à uv,
+téléchargement ou changement de dépendances
 n’est effectué. Les nouvelles installations utilisent aussi `uv venv --relocatable`.
 Un `models_root` interne au projet est enregistré en relatif.
 
@@ -202,6 +205,11 @@ chemin portable du Python géré. Après un déplacement, passez d’abord par l
 lanceur backend ou frontend avant d’utiliser directement `.venv` en ligne de
 commande. Une modification des versions ou du verrou exige toujours une
 réinstallation ; un déplacement seul conserve les paquets déjà installés.
+
+Si une installation utilisant déjà `.venv/pulid-python-path` échoue après déplacement
+avec `uv trampoline failed to spawn Python child process`, mettre les sources à
+jour puis relancer `start_windows.bat` suffit à appliquer ce correctif localement.
+Il utilise le Python géré déplacé, sans recréer `.venv` ni toucher aux modèles.
 
 ## Utilisation avec rp-bot
 

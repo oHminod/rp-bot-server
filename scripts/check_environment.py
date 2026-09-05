@@ -23,10 +23,10 @@ def runtime_python(root: Path, state: dict[str, str]) -> Path:
         return python
 
 
-def write_if_changed(path: Path, content: str) -> None:
+def write_if_changed(path: Path, content: str | bytes) -> None:
     if path.is_symlink():
         raise ValueError(f"Fichier runtime lié : {path}.")
-    data = content.encode("utf-8")
+    data = content.encode("utf-8") if isinstance(content, str) else content
     if path.exists() and path.read_bytes() == data:
         return
     # Concurrent frontend/backend starts must never read a half-written file.
@@ -48,6 +48,32 @@ def validate_state(root: Path, state: dict[str, str]) -> None:
         raise ValueError("Les dépendances verrouillées ont changé.")
 
 
+def windows_venv_launchers(venv: Path, python: Path) -> dict[Path, bytes]:
+    """Use CPython's bundled redirectors, which read home from pyvenv.cfg.
+
+    uv 0.12.10 can embed an absolute minor-junction target in its trampoline.
+    --relocatable and editing pyvenv.cfg do not repair that executable resource.
+    Read both replacements before writing anything; never copy the base Python
+    executable (it needs a different DLL layout) or use a system launcher.
+    """
+    bundled = python.parent / "Lib/venv/scripts/nt"
+    replacements = {}
+    for name, aliases in (
+        ("python.exe", ("python3.exe", "python3.11.exe")),
+        ("pythonw.exe", ()),
+    ):
+        source = bundled / name
+        if not source.is_file():
+            raise ValueError(f"Lanceur CPython géré absent : {source}. Réinstallez le Python géré PuLID.")
+        content = source.read_bytes()
+        replacements[venv / "Scripts" / name] = content
+        for alias in aliases:
+            target = venv / "Scripts" / alias
+            if target.exists():
+                replacements[target] = content
+    return replacements
+
+
 def prepare_environment(root: Path) -> None:
     """Repair local path metadata, never resolve or install dependencies."""
     venv = root / ".venv"
@@ -62,6 +88,7 @@ def prepare_environment(root: Path) -> None:
     if (not python.is_file() or platform.python_version() != state["python"]
             or Path(sys._base_executable).resolve() != python.resolve()):
         raise ValueError(f"Python géré {state['python']} requis : {python}.")
+    launchers = windows_venv_launchers(venv, python) if sys.platform == "win32" else {}
     config_path = venv / "pyvenv.cfg"
     config = dict(line.split(" = ", 1) for line in config_path.read_text(encoding="utf-8").splitlines() if " = " in line)
     config["home"] = str(python.parent)
@@ -75,6 +102,8 @@ def prepare_environment(root: Path) -> None:
     if "base-executable" in config:
         config["base-executable"] = str(python)
     write_if_changed(config_path, "".join(f"{key} = {value}\n" for key, value in config.items()))
+    for executable, content in launchers.items():
+        write_if_changed(executable, content)
     if sys.platform != "win32":
         executable = venv / "bin/python"
         target = os.path.relpath(python, executable.parent)
