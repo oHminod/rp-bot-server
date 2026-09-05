@@ -41,5 +41,7 @@ inputs/*
 !inputs/.gitkeep
 logs/
 
-# Precompiled runtime, bundled in release archives (not source control)
+# Keep the locked Metal runtime in Git as well as in release archives.
+# Other wheel build artifacts remain ignored.
 runtime/wheels/*.whl
+!runtime/wheels/llama_cpp_python-0.3.35-py3-none-macosx_11_0_arm64.whl

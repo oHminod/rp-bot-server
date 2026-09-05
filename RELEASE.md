@@ -121,14 +121,19 @@ Toute reconstruction de la wheel doit être suivie de `lock_environment.py`,
 puis d'une installation et d'un calcul BGE Metal réels avant distribution.
 Les empreintes des fichiers texte normalisent CRLF en LF pour les clones Windows.
 Le manifeste permet `uv sync --frozen` sans résoudre des sources d'une autre
-plateforme : Windows n'a pas besoin du binaire macOS dans son clone Git.
+plateforme : Windows n'utilise pas le binaire macOS inclus dans le clone Git.
 Les versions de Python disponibles sont figées par release uv ; la sélection
 explicite et le mode géré suivent la [documentation uv](https://docs.astral.sh/uv/concepts/python-versions/).
 
-La wheel reste un artefact non suivi par Git. Un clone macOS doit la recevoir
-avec le manifeste correspondant depuis la même archive, ou la reconstruire et
-régénérer le verrou. L'utilisateur final de l'archive n'a aucune compilation à
-faire et n'a besoin ni de Python système, ni de uv global, ni de Xcode.
+La wheel Metal verrouillée est versionnée directement dans Git (environ 17 Mo),
+avec son manifeste, et incluse dans les archives. Un clone macOS frais doit être
+installable sans copie manuelle de wheel, Git LFS ou compilation. Le mainteneur
+doit inclure le binaire dans le même commit que tout changement de manifeste ou
+de verrou ; en cas de changement de nom, mettre également à jour l'exception
+dans `.gitignore`. Les autres wheels de construction restent ignorées.
+L'utilisateur final du clone comme de l'archive n'a besoin ni de Python système,
+ni de uv global, ni de Xcode. `tests/test_release.py` vérifie que la wheel du
+checkout existe et correspond à l'empreinte du manifeste.
 
 ## Validation de cette tranche (5 septembre 2026)
 

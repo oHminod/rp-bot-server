@@ -15,7 +15,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _release_source(tmp_path: Path) -> Path:
-    """Use a tiny fixture wheel: unit tests also run from Windows Git clones."""
+    """Use a tiny wheel for archive tests; validate the real checkout separately."""
     root = tmp_path / "source"
     for name in (*ROOT_FILES, *STATIC_FILES, *(f"scripts/{name}" for name in SCRIPT_NAMES)):
         source = PROJECT_ROOT / name
@@ -37,6 +37,14 @@ def _release_source(tmp_path: Path) -> Path:
     lock.write_text(lock.read_text().replace(old_hash, manifest["sha256"]))
     write_lock_manifest(root)
     return root
+
+
+def test_checkout_contains_the_locked_metal_wheel() -> None:
+    manifest = json.loads((PROJECT_ROOT / "runtime/wheels/manifest.json").read_text(encoding="utf-8"))
+    wheel = PROJECT_ROOT / "runtime/wheels" / manifest["filename"]
+    assert wheel.is_file(), f"Wheel Metal manquante dans les sources : {wheel}"
+    # A missing binary or Git LFS pointer must fail on a fresh checkout too.
+    assert hashlib.sha256(wheel.read_bytes()).hexdigest() == manifest["sha256"]
 
 
 def test_release_archive_is_deterministic_installable_source_without_local_data(

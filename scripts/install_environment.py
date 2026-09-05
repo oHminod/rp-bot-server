@@ -109,7 +109,10 @@ def install(root: Path, models_root: Path, uv: Path, profile: str) -> None:
         manifest = json.loads(manifest_path.read_text())
         wheel = manifest_path.parent / manifest["filename"]
         if not wheel.is_file():
-            raise RuntimeError(f"Wheel Metal précompilée absente : {wheel}. Utilisez une archive PuLID complète.")
+            raise RuntimeError(
+                f"Wheel Metal précompilée absente : {wheel}. "
+                "Récupérez les sources PuLID complètes (clone Git ou archive)."
+            )
         if hashlib.sha256(wheel.read_bytes()).hexdigest() != manifest["sha256"]:
             raise RuntimeError(f"Empreinte de la wheel Metal incorrecte : {wheel}.")
     venv = root / ".venv"

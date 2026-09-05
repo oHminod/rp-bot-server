@@ -81,9 +81,10 @@ sans historique Git, tests, caches, configurations locales ni modèles.
 
 ### 2. Installer sur macOS
 
-Depuis un clone de développement, ajouter d’abord la wheel Metal et son manifeste
-issus de la même archive PuLID sous `runtime/wheels/` (ou la construire suivant
-[RELEASE.md](RELEASE.md)). La wheel n’est pas versionnée dans Git.
+Le clone inclut la wheel Metal précompilée et son manifeste sous `runtime/wheels/`,
+comme l’archive de distribution. Elle est versionnée directement dans Git, sans
+Git LFS. Aucune copie manuelle ni compilation locale n’est nécessaire ;
+l’installateur vérifie son SHA-256 avant de l’utiliser.
 
 ```bash
 ./install_macos.sh
