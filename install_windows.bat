@@ -1,5 +1,11 @@
 @echo off
 setlocal EnableExtensions
+rem Ignore global CUDA toolkits and Python/DLL search customizations.
+for /f "tokens=1 delims==" %%V in ('set CUDA_PATH 2^>nul') do set "%%V="
+set "CUDA_HOME="
+set "CUDA_ROOT="
+set "NVTOOLSEXT_PATH="
+set "PATH=%SystemRoot%\System32;%SystemRoot%;%SystemRoot%\System32\Wbem;%SystemRoot%\System32\WindowsPowerShell\v1.0"
 
 set "PROJECT_DIR=%~dp0"
 set "PULID_PROJECT_ROOT=%PROJECT_DIR%"
@@ -130,29 +136,29 @@ if errorlevel 1 goto :dependency_error
 
 echo.
 echo Installation ou reparation des modeles et configurations...
-"%VENV_PYTHON%" -m pulid_app.installer --models-root "%PULID_MODELS_ROOT%" --sdxl ask
+"%VENV_PYTHON%" -I -m pulid_app.installer --models-root "%PULID_MODELS_ROOT%" --sdxl ask
 if errorlevel 1 goto :model_install_error
 
 echo Verification de CUDA...
-"%VENV_PYTHON%" -c "import torch; assert torch.cuda.is_available(), 'CUDA indisponible : mettez a jour le pilote NVIDIA'; print('CUDA OK :', torch.cuda.get_device_name(0), '- PyTorch', torch.__version__)"
+"%VENV_PYTHON%" -I -c "import torch; assert torch.cuda.is_available(), 'CUDA indisponible : mettez a jour le pilote NVIDIA'; print('CUDA OK :', torch.cuda.get_device_name(0), '- PyTorch', torch.__version__)"
 if errorlevel 1 goto :cuda_error
 
 echo Verification du runtime GGUF CUDA...
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$actual = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $env:LLAMA_CPP_LIB_DIR 'ggml-cpu.dll')).Hash.ToLowerInvariant(); if ($actual -ne $env:LLAMA_CPP_PORTABLE_CPU_DLL_SHA256) { Write-Error ('Le backend CPU portable a ete remplace : ' + $actual); exit 1 }"
 if errorlevel 1 goto :llama_portable_error
 
-"%VENV_PYTHON%" -c "from pulid_app.models.text_embedding import _cuda_dll_search_path; dll_context = _cuda_dll_search_path('cuda'); dll_context.__enter__(); import llama_cpp; info = llama_cpp.llama_print_system_info().decode(); assert 'CUDA' in info, 'Backend CUDA absent de llama-cpp-python'; assert 'AVX512 = 1' not in info, 'Backend CPU AVX-512 incompatible encore installe'; print(info); print('llama-cpp-python CUDA OK :', llama_cpp.__version__); dll_context.__exit__(None, None, None)"
+"%VENV_PYTHON%" -I -c "from pulid_app.models.text_embedding import _cuda_dll_search_path; dll_context = _cuda_dll_search_path('cuda'); dll_context.__enter__(); import llama_cpp; info = llama_cpp.llama_print_system_info().decode(); assert 'CUDA' in info, 'Backend CUDA absent de llama-cpp-python'; assert 'AVX512 = 1' not in info, 'Backend CPU AVX-512 incompatible encore installe'; print(info); print('llama-cpp-python CUDA OK :', llama_cpp.__version__); dll_context.__exit__(None, None, None)"
 if errorlevel 1 goto :llama_cuda_error
 
 echo Verification du chargement et du calcul BGE-M3 sur CUDA...
-"%VENV_PYTHON%" "%PROJECT_DIR%scripts\verify_text_embedding.py" --device cuda
+"%VENV_PYTHON%" -I "%PROJECT_DIR%scripts\verify_text_embedding.py" --device cuda
 if errorlevel 1 goto :llama_context_error
 
 echo Verification de l'installation et des modeles...
-"%VENV_PYTHON%" -m pulid_app.cli doctor --allow-missing-sdxl
+"%VENV_PYTHON%" -I -m pulid_app.cli doctor --allow-missing-sdxl
 if errorlevel 1 goto :validation_error
 
-"%VENV_PYTHON%" "%PROJECT_DIR%scripts\inspect_models.py" --show-cache-env --fail-on-internal-cache --allow-missing-sdxl
+"%VENV_PYTHON%" -I "%PROJECT_DIR%scripts\inspect_models.py" --show-cache-env --fail-on-internal-cache --allow-missing-sdxl
 if errorlevel 1 goto :validation_error
 
 if "%PULID_CONFIGURE_NETWORK%"=="1" goto :ask_firewall

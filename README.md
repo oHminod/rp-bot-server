@@ -167,6 +167,15 @@ que le manifeste lie bien le verrou au `pyproject.toml`, aux versions des outils
 et au manifeste de la wheel. Les outils de construction Python sont eux aussi
 verrouillés ; aucun compilateur C/C++ n’est utilisé sur le poste utilisateur.
 
+L'installation télécharge les dépendances verrouillées sans réutiliser de paquets
+globaux. Python démarre en mode isolé (`-I`) ; les paquets utilisateur et les
+variables `PYTHONPATH`/`PYTHONHOME` n'interviennent pas. uv ignore les configurations
+locales héritées et globales (`--no-config`), les options nécessaires étant
+passées explicitement. Les lanceurs du backend et du frontend utilisent uniquement
+le Python PuLID. Le chargement CUDA recherche les DLL de la wheel PyTorch locale
+et du pilote NVIDIA, sans utiliser un CUDA Toolkit global. Les composants de
+l'OS et le pilote graphique restent des prérequis de la machine compatible.
+
 BGE tourne sur GPU Metal avec `n_gpu_layers=-1` sur macOS. Une wheel sans le
 backend GPU requis provoque une erreur explicite, sans repli CPU automatique.
 Le mode CPU explicite reste disponible ; InsightFace/ONNX peut rester sur CPU.
@@ -489,6 +498,7 @@ responsable de l’enregistrement du PNG reçu.
 
 | Symptôme | Action recommandée |
 |---|---|
+| uv affiche `everything's installed!` puis `Installation de uv ... impossible` | Mettre à jour `dev` et relancer `install_windows.bat --development`. L'ancien bootstrap pouvait lire un `$LASTEXITCODE` vide ou périmé après le script PowerShell. Le contrôle vérifie désormais le fichier uv puis son code de sortie et sa version. Si uv est déjà installé, relancer l'ancien installateur permet également de dépasser ce premier blocage. |
 | Catalogue PuLID indisponible dans `rp-bot` | Vérifier que le serveur est démarré et que l’URL se termine par `:12693`, sans `/v1` |
 | Serveur distant inaccessible | Sur un réseau privé uniquement, exécuter `install_windows.bat --network`, puis `start_windows.bat --network` et utiliser l’IPv4 privée affichée |
 | Aucun visage détecté | Choisir un avatar net, de face et suffisamment grand |

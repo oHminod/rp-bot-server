@@ -159,3 +159,33 @@ La recette [WINDOWS_INSTALL_TEST.md](WINDOWS_INSTALL_TEST.md) reste à exécuter
 sur Windows natif : installation sans outils préinstallés, jonction NTFS cassée,
 DLL/driver CUDA, calcul BGE CUDA et déplacement. Aucune génération SDXL lourde
 n'a été effectuée dans cette tranche. Aucun commit ni push n'est automatique.
+
+
+## Correctif du bootstrap Windows et isolation
+
+Un premier test Windows sur `783337726a2dde7a71f459da5c16f61f3077c271`
+a installé uv 0.12.10, puis s'est arrêté sur un faux échec. Le bootstrap lisait
+`$LASTEXITCODE` immédiatement après `Invoke-Expression`, qui ne garantit pas de
+mettre à jour ce code natif. Il vérifie désormais l'existence de uv puis exécute
+`uv --version` et contrôle son véritable code de sortie et la version épinglée.
+Voir la [sémantique PowerShell de LASTEXITCODE](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_automatic_variables?view=powershell-5.1#lastexitcode).
+
+`tests/test_windows_bootstrap.py` exécute le bloc PowerShell réel avec un
+installateur local simulé : état initial vide ou périmé, binaire absent, mauvaise
+version, binaire en échec, erreur de téléchargement, réutilisation et remplacement.
+Les huit cas passent avec PowerShell 7.5.2 portable sur macOS. Le test sélectionne
+Windows PowerShell 5.1 quand il est disponible ; sinon il utilise `pwsh` ou
+`PULID_TEST_POWERSHELL`. Sans PowerShell, ces cas sont explicitement ignorés.
+
+L'installation conserve le téléchargement verrouillé, sans utiliser les paquets
+Python globaux. Les lanceurs passent `-I`, uv reçoit `--no-config`, les variables
+de recherche de bibliothèques héritées sont neutralisées, et les chemins CUDA
+sont limités à la wheel locale et au pilote. Les tests des lanceurs injectent un
+`PYTHONHOME` invalide et un `sitecustomize` global : ils restent ignorés. Le
+frontend ne se rabat plus sur un Python système.
+
+Validation locale de ce correctif : **250 tests réussis, 3 tests d'intégration
+lourde ignorés**. Une installation de production dans `/tmp` a également réussi
+avec `PYTHONHOME`, `PYTHONPATH`, `PYTHONUSERBASE` et une configuration uv globale
+volontairement invalides. Les modèles et l'environnement utilisateur existant
+n'ont pas été modifiés. Le parcours complet Windows natif reste à retester.

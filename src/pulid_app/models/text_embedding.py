@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
-import importlib.util
 import math
 import os
 from pathlib import Path
@@ -35,20 +34,10 @@ def _embedding_device_type(device: str) -> str:
 def _cuda_dll_candidates(
     *,
     prefix: Path,
-    environ: Mapping[str, str],
-    torch_package_dir: Path | None,
     windows_root: Path | None = None,
 ) -> tuple[Path, ...]:
+    # Use only the local wheel and the NVIDIA driver; never a global toolkit.
     candidates = [prefix / "Lib" / "site-packages" / "torch" / "lib"]
-    if torch_package_dir is not None:
-        candidates.append(torch_package_dir / "lib")
-    for name, value in environ.items():
-        normalized_name = name.upper()
-        if normalized_name == "CUDA_PATH" or normalized_name.startswith(
-            "CUDA_PATH_V"
-        ):
-            if value.strip():
-                candidates.append(Path(value) / "bin")
     if windows_root is not None:
         candidates.extend(_nvidia_driver_cuda_dll_directories(windows_root))
 
@@ -107,16 +96,8 @@ def _prepend_dll_directories_to_path(
 def _windows_cuda_dll_directories() -> tuple[Path, ...]:
     if os.name != "nt":
         return ()
-    torch_spec = importlib.util.find_spec("torch")
-    torch_package_dir = (
-        Path(torch_spec.origin).parent
-        if torch_spec is not None and torch_spec.origin is not None
-        else None
-    )
     return _cuda_dll_candidates(
         prefix=Path(sys.prefix),
-        environ=os.environ,
-        torch_package_dir=torch_package_dir,
         windows_root=Path(os.environ.get("SystemRoot", r"C:\Windows")),
     )
 
@@ -145,8 +126,9 @@ def _cuda_dll_search_path(device_type: str):
                     "install_windows.bat."
                 )
             original_path = os.environ.get("PATH", "")
+            windows_root = Path(os.environ.get("SystemRoot", r"C:\Windows"))
             os.environ["PATH"] = _prepend_dll_directories_to_path(
-                original_path,
+                os.pathsep.join((str(windows_root / "System32"), str(windows_root))),
                 directories,
                 separator=os.pathsep,
             )

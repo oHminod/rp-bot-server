@@ -706,3 +706,9 @@ pas le backend GPU demandé, le chargement produit une `ModelLoadError` via la
 gestion d’erreur existante des embeddings, sans repli CPU silencieux. Réinstaller
 PuLID depuis une archive complète restaure la wheel Metal précompilée. Les routes,
 corps, en-têtes et formats d’erreur existants restent identiques.
+
+Les lanceurs fournis utilisent maintenant Python en mode isolé. Sous Windows,
+les DLL CUDA applicatives proviennent du `.venv` PuLID ; le pilote NVIDIA reste
+requis, et les variables d'un CUDA Toolkit global ne sont plus utilisées. En cas
+de DLL manquante, réparer l'installation PuLID ou son pilote ; les formats des
+réponses HTTP restent inchangés.

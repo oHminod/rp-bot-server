@@ -20,15 +20,17 @@ try {
     if ($installed -notmatch ('^uv ' + [regex]::Escape($uvVersion) + '(\s|$)')) {
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         Invoke-RestMethod "https://astral.sh/uv/$uvVersion/install.ps1" | Invoke-Expression
-        if ($LASTEXITCODE -ne 0) { throw "Installation de uv $uvVersion impossible : $uv" }
     }
+    # Invoke-Expression does not set a native exit code. On a fresh host it can
+    # still be null (or stale); check the installed executable itself instead.
+    if (-not (Test-Path -LiteralPath $uv -PathType Leaf)) { throw "Executable uv absent apres installation : $uv" }
     $installed = (& $uv --version)
     if ($LASTEXITCODE -ne 0 -or $installed -notmatch ('^uv ' + [regex]::Escape($uvVersion) + '(\s|$)')) { throw "uv $uvVersion requis : $uv" }
     & $uv python install "cpython-$pythonVersion-windows-x86_64-none" --no-bin --no-registry --no-config
     if ($LASTEXITCODE -ne 0) { throw "Python gere indisponible : $env:UV_PYTHON_INSTALL_DIR" }
     # Full patch-version path: never depend on uv's movable 3.11 junction.
     $python = Join-Path $env:UV_PYTHON_INSTALL_DIR "cpython-$pythonVersion-windows-x86_64-none\python.exe"
-    & $python (Join-Path $PSScriptRoot 'install_environment.py') --uv $uv --models-root $modelsRoot --profile $env:PULID_INSTALL_PROFILE
+    & $python -I (Join-Path $PSScriptRoot 'install_environment.py') --uv $uv --models-root $modelsRoot --profile $env:PULID_INSTALL_PROFILE
     if ($LASTEXITCODE -ne 0) { throw 'Installation verrouillee interrompue; voir le diagnostic ci-dessus.' }
     exit 0
 } catch {

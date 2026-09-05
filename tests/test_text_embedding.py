@@ -17,7 +17,7 @@ from pulid_app.models.text_embedding import (
 )
 
 
-def test_cuda_dll_candidates_include_torch_and_cuda_toolkit(tmp_path: Path) -> None:
+def test_cuda_dll_candidates_exclude_global_torch_and_cuda_toolkit(tmp_path: Path, monkeypatch) -> None:
     prefix = tmp_path / "venv"
     prefix_torch_lib = prefix / "Lib" / "site-packages" / "torch" / "lib"
     prefix_torch_lib.mkdir(parents=True)
@@ -26,17 +26,12 @@ def test_cuda_dll_candidates_include_torch_and_cuda_toolkit(tmp_path: Path) -> N
     cuda_root = tmp_path / "cuda"
     (cuda_root / "bin").mkdir(parents=True)
 
-    candidates = _cuda_dll_candidates(
-        prefix=prefix,
-        environ={"CUDA_PATH": str(cuda_root)},
-        torch_package_dir=discovered_torch,
-    )
+    monkeypatch.setenv("CUDA_PATH", str(cuda_root))
+    monkeypatch.setenv("CUDA_PATH_V13_0", str(cuda_root))
+    monkeypatch.setenv("PATH", str(discovered_torch / "lib"))
+    candidates = _cuda_dll_candidates(prefix=prefix)
 
-    assert candidates == (
-        prefix_torch_lib.resolve(),
-        (discovered_torch / "lib").resolve(),
-        (cuda_root / "bin").resolve(),
-    )
+    assert candidates == (prefix_torch_lib.resolve(),)
 
 
 def test_cuda_dll_candidates_include_nvidia_driver_store(tmp_path: Path) -> None:
@@ -48,8 +43,6 @@ def test_cuda_dll_candidates_include_nvidia_driver_store(tmp_path: Path) -> None
 
     candidates = _cuda_dll_candidates(
         prefix=tmp_path / "venv",
-        environ={},
-        torch_package_dir=None,
         windows_root=windows_root,
     )
 

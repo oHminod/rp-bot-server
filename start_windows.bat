@@ -1,5 +1,11 @@
 @echo off
 setlocal EnableExtensions
+rem Ignore global CUDA toolkits and Python/DLL search customizations.
+for /f "tokens=1 delims==" %%V in ('set CUDA_PATH 2^>nul') do set "%%V="
+set "CUDA_HOME="
+set "CUDA_ROOT="
+set "NVTOOLSEXT_PATH="
+set "PATH=%SystemRoot%\System32;%SystemRoot%;%SystemRoot%\System32\Wbem;%SystemRoot%\System32\WindowsPowerShell\v1.0"
 
 set "PROJECT_DIR=%~dp0"
 set "PULID_PROJECT_ROOT=%PROJECT_DIR%"
@@ -24,7 +30,7 @@ if not exist "%SERVER_PYTHON%" (
 
 set "PYTHONHOME="
 set "PYTHONPATH="
-"%SERVER_PYTHON%" "%PROJECT_DIR%scripts\check_environment.py"
+"%SERVER_PYTHON%" -I "%PROJECT_DIR%scripts\check_environment.py"
 if errorlevel 1 (
     echo [ERREUR] Python inutilisable ou dossier deplace. Relancez install_windows.bat.
     exit /b 1
@@ -40,5 +46,5 @@ echo.
 echo Arret du serveur : Ctrl+C
 echo.
 
-"%SERVER_PYTHON%" -m pulid_app.server --host %SERVER_HOST% --port 12693 --device cuda --dtype float16 --offload none %SERVER_CORS% %*
+"%SERVER_PYTHON%" -I -m pulid_app.server --host %SERVER_HOST% --port 12693 --device cuda --dtype float16 --offload none %SERVER_CORS% %*
 exit /b %ERRORLEVEL%

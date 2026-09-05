@@ -12,6 +12,7 @@ import subprocess
 import sys
 import stat
 import tempfile
+import tomllib
 import urllib.request
 import zipfile
 
@@ -41,8 +42,11 @@ def verify_bootstrap(root: Path, models_root: Path) -> Path:
 
 
 def clean_environment(root: Path, models_root: Path) -> dict[str, str]:
-    environment = {k: v for k, v in os.environ.items() if not k.startswith("UV_")}
-    for name in ("PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV", "CONDA_PREFIX"):
+    environment = {
+        k: v for k, v in os.environ.items()
+        if not k.upper().startswith(("UV_", "PYTHON", "PIP_", "CUDA_PATH", "DYLD_", "LD_"))
+    }
+    for name in ("VIRTUAL_ENV", "CONDA_PREFIX", "CUDA_HOME", "CUDA_ROOT", "NVTOOLSEXT_PATH"):
         environment.pop(name, None)
     suffix = "windows" if sys.platform == "win32" else "macos"
     environment.update(
@@ -53,7 +57,15 @@ def clean_environment(root: Path, models_root: Path) -> dict[str, str]:
         UV_PYTHON_DOWNLOADS="never",
         UV_LINK_MODE="copy",
         PULID_PROJECT_ROOT=str(root),
+        PYTHONNOUSERSITE="1",
+        PYTHONSAFEPATH="1",
     )
+    if sys.platform == "win32":
+        windows = Path(environment.get("SystemRoot", r"C:\Windows"))
+        paths = [root / ".venv/Scripts", windows / "System32", windows]
+    else:
+        paths = [root / ".venv/bin", Path("/usr/bin"), Path("/bin"), Path("/usr/sbin"), Path("/sbin")]
+    environment["PATH"] = os.pathsep.join(str(path) for path in paths)
     return environment
 
 
@@ -113,7 +125,7 @@ def install(root: Path, models_root: Path, uv: Path, profile: str) -> None:
         raise RuntimeError(f".venv est un lien/jonction : {venv}. Déplacez ce lien puis relancez l'installation.")
 
     def run(*arguments: str) -> None:
-        subprocess.run([str(uv), *arguments], cwd=root, env=environment, check=True)
+        subprocess.run([str(uv), *arguments, "--no-config"], cwd=root, env=environment, check=True)
 
     run("venv", "--clear", "--python", str(python), str(venv))
     common = ("sync", "--frozen", "--python", str(python), "--no-default-groups")
@@ -125,6 +137,11 @@ def install(root: Path, models_root: Path, uv: Path, profile: str) -> None:
         extras.extend(("--extra", "dev"))
     else:
         extras.append("--no-editable")
+    # --no-config excludes machine/user uv settings. Preserve the project's
+    # wheel-only requirements explicitly, without enabling config discovery.
+    project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    for package in project["tool"]["uv"]["no-build-package"]:
+        extras.extend(("--no-build-package", package))
     run(*common, "--group", "build", "--no-build-isolation", *extras)
     venv_python = venv / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
     run("pip", "check", "--python", str(venv_python))

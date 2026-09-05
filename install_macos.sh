@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 
 set -Eeuo pipefail
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin
+unset DYLD_LIBRARY_PATH DYLD_FALLBACK_LIBRARY_PATH DYLD_FRAMEWORK_PATH DYLD_FALLBACK_FRAMEWORK_PATH DYLD_INSERT_LIBRARIES LD_LIBRARY_PATH LD_PRELOAD
 
 PROJECT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 export PULID_PROJECT_ROOT="${PROJECT_DIR}"
@@ -177,23 +179,23 @@ fi
 [[ "$("${UV_EXE}" --version | awk '{print $2}')" == "${UV_VERSION}" ]]
 "${UV_EXE}" python install "cpython-${PYTHON_VERSION}-macos-aarch64-none" --no-bin --no-registry --no-config
 MANAGED_PYTHON="${UV_PYTHON_INSTALL_DIR}/cpython-${PYTHON_VERSION}-macos-aarch64-none/bin/python3.11"
-"${MANAGED_PYTHON}" "${PROJECT_DIR}/scripts/install_environment.py" \
+"${MANAGED_PYTHON}" -I "${PROJECT_DIR}/scripts/install_environment.py" \
   --uv "${UV_EXE}" --models-root "${PULID_MODELS_ROOT}" --profile "${PULID_INSTALL_PROFILE}"
 PYTHON_ARCH="arm64"
 
 echo
 echo "Installation ou réparation des modèles et configurations..."
-"${VENV_PYTHON}" -m pulid_app.installer \
+"${VENV_PYTHON}" -I -m pulid_app.installer \
   --models-root "${PULID_MODELS_ROOT}" \
   --sdxl ask
 
 echo "Vérification des composants Python..."
-"${VENV_PYTHON}" -c "import diffusers, fastapi, llama_cpp, torch, transformers; info = llama_cpp.llama_print_system_info().decode(); assert 'MTL' in info, 'Backend Metal absent de llama-cpp-python'; print('Python', '${PYTHON_VERSION}', '-', '${PYTHON_ARCH}'); print('PyTorch', torch.__version__, '- MPS disponible :', torch.backends.mps.is_available()); print('llama-cpp-python', llama_cpp.__version__, '- Metal OK')"
-"${VENV_PYTHON}" -m pulid_app.cli --version
-"${VENV_PYTHON}" -c "from pulid_app.config import load_config; config = load_config(); embedding = config.text_embedding; assert embedding is not None; assert embedding.checkpoint.is_file(), embedding.checkpoint; print('GGUF configuré :', embedding.checkpoint)"
-"${VENV_PYTHON}" scripts/verify_text_embedding.py --device mps
-"${VENV_PYTHON}" -m pulid_app.cli doctor --allow-missing-sdxl
-"${VENV_PYTHON}" scripts/inspect_models.py \
+"${VENV_PYTHON}" -I -c "import diffusers, fastapi, llama_cpp, torch, transformers; info = llama_cpp.llama_print_system_info().decode(); assert 'MTL' in info, 'Backend Metal absent de llama-cpp-python'; print('Python', '${PYTHON_VERSION}', '-', '${PYTHON_ARCH}'); print('PyTorch', torch.__version__, '- MPS disponible :', torch.backends.mps.is_available()); print('llama-cpp-python', llama_cpp.__version__, '- Metal OK')"
+"${VENV_PYTHON}" -I -m pulid_app.cli --version
+"${VENV_PYTHON}" -I -c "from pulid_app.config import load_config; config = load_config(); embedding = config.text_embedding; assert embedding is not None; assert embedding.checkpoint.is_file(), embedding.checkpoint; print('GGUF configuré :', embedding.checkpoint)"
+"${VENV_PYTHON}" -I scripts/verify_text_embedding.py --device mps
+"${VENV_PYTHON}" -I -m pulid_app.cli doctor --allow-missing-sdxl
+"${VENV_PYTHON}" -I scripts/inspect_models.py \
   --show-cache-env \
   --fail-on-internal-cache \
   --allow-missing-sdxl
