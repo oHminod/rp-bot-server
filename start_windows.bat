@@ -22,17 +22,14 @@ if /I "%~1"=="--network" (
 cd /d "%PROJECT_DIR%"
 
 set "SERVER_PYTHON=%PROJECT_DIR%.venv\Scripts\python.exe"
-if not exist "%SERVER_PYTHON%" (
-    echo [ERREUR] Serveur PuLID non installe.
-    echo Executez d'abord : install_windows.bat
-    exit /b 1
-)
-
 set "PYTHONHOME="
 set "PYTHONPATH="
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PROJECT_DIR%scripts\prepare_runtime_windows.ps1" -ProjectRoot "%PROJECT_DIR%."
+if errorlevel 1 exit /b 1
+
 "%SERVER_PYTHON%" -I "%PROJECT_DIR%scripts\check_environment.py"
 if errorlevel 1 (
-    echo [ERREUR] Python inutilisable ou dossier deplace. Relancez install_windows.bat.
+    echo [ERREUR] Environnement Python inutilisable. Relancez install_windows.bat.
     exit /b 1
 )
 

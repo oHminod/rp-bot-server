@@ -127,7 +127,7 @@ def install(root: Path, models_root: Path, uv: Path, profile: str) -> None:
     def run(*arguments: str) -> None:
         subprocess.run([str(uv), *arguments, "--no-config"], cwd=root, env=environment, check=True)
 
-    run("venv", "--clear", "--python", str(python), str(venv))
+    run("venv", "--clear", "--relocatable", "--python", str(python), str(venv))
     common = ("sync", "--frozen", "--python", str(python), "--no-default-groups")
     run(*common, "--only-group", "build", "--no-install-project")
     extras: list[str] = []
@@ -153,6 +153,8 @@ def install(root: Path, models_root: Path, uv: Path, profile: str) -> None:
         "lock_sha256": hashlib.sha256((root / "uv.lock").read_text(encoding="utf-8").encode("utf-8")).hexdigest(),
     }
     (venv / "pulid-runtime.json").write_text(json.dumps(state, indent=2) + "\n")
+    subprocess.run([str(python), "-I", str(root / "scripts/check_environment.py"), "--prepare"],
+                   cwd=root, env=environment, check=True)
     print(f"Environnement vérifié : {venv_python}\nPython géré : {python}\nuv : {expected_uv}")
 
 

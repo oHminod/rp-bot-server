@@ -9,10 +9,11 @@ set "NVTOOLSEXT_PATH="
 set "PROJECT_DIR=%~dp0"
 set "VENV_PYTHON=%PROJECT_DIR%.venv\Scripts\python.exe"
 cd /d "%PROJECT_DIR%"
-if not exist "%VENV_PYTHON%" (
-    echo [ERREUR] Python PuLID introuvable. Executez d'abord : install_windows.bat
-    exit /b 1
-)
+set "PYTHONHOME="
+set "PYTHONPATH="
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PROJECT_DIR%scripts\prepare_runtime_windows.ps1" -ProjectRoot "%PROJECT_DIR%."
+if errorlevel 1 exit /b 1
+
 "%VENV_PYTHON%" -I "%PROJECT_DIR%scripts\check_environment.py"
 if errorlevel 1 exit /b 1
 "%VENV_PYTHON%" -I "%PROJECT_DIR%frontend\server.py" --host 127.0.0.1 --port 8888 %*

@@ -78,6 +78,8 @@ def test_release_archive_is_deterministic_installable_source_without_local_data(
     assert f"{prefix}/uv.lock" in names
     assert f"{prefix}/.uv-version" in names
     assert f"{prefix}/scripts/check_environment.py" in names
+    assert f"{prefix}/scripts/prepare_runtime_macos.sh" in names
+    assert f"{prefix}/scripts/prepare_runtime_windows.ps1" in names
     assert f"{prefix}/scripts/bootstrap_windows.ps1" in names
     assert f"{prefix}/runtime/wheels/manifest.json" in names
     assert any(name.endswith("macosx_11_0_arm64.whl") for name in names)

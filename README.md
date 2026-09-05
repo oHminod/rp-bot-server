@@ -180,11 +180,28 @@ BGE tourne sur GPU Metal avec `n_gpu_layers=-1` sur macOS. Une wheel sans le
 backend GPU requis provoque une erreur explicite, sans repli CPU automatique.
 Le mode CPU explicite reste disponible ; InsightFace/ONNX peut rester sur CPU.
 
-Après déplacement de PuLID, relancer l’installateur pour reconstruire `.venv` et
-ses chemins. Le lanceur détecte un environnement déplacé ou périmé et indique
-cette réparation. Un `models_root` interne au projet est enregistré en relatif.
-La [recette Windows](WINDOWS_INSTALL_TEST.md) fournit les commandes Git, le test
-sans outils préinstallés, la reproduction d’une jonction cassée et le déplacement.
+PuLID peut être déplacé **sans réinstallation** : arrêtez le backend et le
+frontend, déplacez le dossier complet (y compris `.venv` et `PuLID_models`), puis
+utilisez les lanceurs habituels. Ils retrouvent le Python géré et réajustent
+localement `pyvenv.cfg`, le lien Python macOS et le chemin des sources en mode
+développement. Aucun appel à uv, téléchargement ou changement de dépendances
+n’est effectué. Les nouvelles installations utilisent aussi `uv venv --relocatable`.
+Un `models_root` interne au projet est enregistré en relatif.
+
+Le déplacement conserve le même OS et la même architecture ; une autre machine
+doit satisfaire les mêmes prérequis système/GPU. Les modèles/Python placés dans
+un dossier externe restent à leur chemin absolu : déplacer ce dossier séparément,
+ou changer sa lettre de lecteur, demande une reconfiguration. Les chemins absolus
+personnalisés dans la configuration ou les variables d’environnement ne sont pas
+réécrits. Le dossier doit être accessible en écriture au premier démarrage après
+le déplacement. Recréez les raccourcis pointant vers l’ancien emplacement.
+
+Pour une installation antérieure à ce mécanisme, mettez les sources à jour et
+lancez une fois PuLID **avant de déplacer le dossier**, afin d’enregistrer le
+chemin portable du Python géré. Après un déplacement, passez d’abord par le
+lanceur backend ou frontend avant d’utiliser directement `.venv` en ligne de
+commande. Une modification des versions ou du verrou exige toujours une
+réinstallation ; un déplacement seul conserve les paquets déjà installés.
 
 ## Utilisation avec rp-bot
 

@@ -125,7 +125,9 @@ def test_install_recreates_venv_and_uses_only_frozen_dependencies(tmp_path, monk
     assert ('dev' in commands[2]) == (profile == 'development')
     assert ('--no-editable' in commands[2]) == (profile == 'production')
     assert commands[3][1:3] == ['pip', 'check']
-    assert all('--no-config' in command for command in commands)
+    assert all('--no-config' in command for command in commands[:-1])
+    assert '--relocatable' in commands[0]
+    assert commands[-1][-1] == '--prepare'
     assert '--no-build-package' in commands[2]
     assert (tmp_path / '.venv/pulid-runtime.json').is_file()
 
@@ -228,11 +230,13 @@ def test_launchers_ignore_python_environment_and_user_packages(tmp_path, fronten
     else:
         launcher = 'start_frontend_macos.sh' if frontend else 'start_pulid_server.sh'
         command = ['/bin/bash', str(project / launcher)]
+    for helper in ('prepare_runtime_macos.sh', 'prepare_runtime_windows.ps1'):
+        shutil.copy2(ROOT / 'scripts' / helper, project / 'scripts' / helper)
     shutil.copy2(ROOT / launcher, project / launcher)
     environment = dict(os.environ, PYTHONHOME=str(tmp_path / 'wrong-python'),
                        PYTHONPATH=str(unwanted), PYTHONUSERBASE=str(unwanted))
     result = subprocess.run(command, cwd=project, env=environment,
                             capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert result.stdout.count('ISOLATED_PULID_OK') == 2
+    assert result.stdout.count('ISOLATED_PULID_OK') == 3
     assert not marker.exists()

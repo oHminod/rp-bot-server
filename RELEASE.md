@@ -155,8 +155,7 @@ faire et n'a besoin ni de Python système, ni de uv global, ni de Xcode.
 - Résolution croisée Windows x64 : PyTorch 2.13.0+cu130 et Torchvision 0.28.0+cu130,
   wheel llama-cpp-python CUDA 13.0 ; aucune wheel macOS requise pour ce parcours.
 
-La recette [WINDOWS_INSTALL_TEST.md](WINDOWS_INSTALL_TEST.md) reste à exécuter
-sur Windows natif : installation sans outils préinstallés, jonction NTFS cassée,
+Restent à vérifier sur Windows natif : installation sans outils préinstallés, jonction NTFS cassée,
 DLL/driver CUDA, calcul BGE CUDA et déplacement. Aucune génération SDXL lourde
 n'a été effectuée dans cette tranche. Aucun commit ni push n'est automatique.
 
@@ -189,3 +188,44 @@ lourde ignorés**. Une installation de production dans `/tmp` a également réus
 avec `PYTHONHOME`, `PYTHONPATH`, `PYTHONUSERBASE` et une configuration uv globale
 volontairement invalides. Les modèles et l'environnement utilisateur existant
 n'ont pas été modifiés. Le parcours complet Windows natif reste à retester.
+
+
+## Déplacement sans réinstallation
+
+Les nouvelles installations créent `.venv` avec `uv venv --relocatable`. Le
+fichier `.venv/pulid-python-path` conserve un chemin relatif lorsque Python est
+sous le projet, absolu lorsqu’il est externe. Les lanceurs backend et frontend
+appellent ce Python géré en mode isolé pour réajuster les chemins de `.venv`
+avant sa première utilisation. Cette étape utilise exclusivement la bibliothèque
+standard : ni uv, ni réseau, ni résolution de paquets. Les versions et le verrou
+sont contrôlés avant toute modification. Les métadonnées sont remplacées
+atomiquement et ne sont pas réécrites si elles sont déjà correctes.
+
+Le profil développement utilise un chemin `.pth` relatif vers les sources. Le
+profil production conserve le paquet installé. Les deux helpers natifs sont
+obligatoires dans les archives. Une ancienne installation encore à son emplacement
+initial peut enregistrer les métadonnées portables au premier démarrage avec les
+nouveaux lanceurs, sans repasser par l’installation.
+
+Validation macOS : installation de production complète en Python 3.11.16/uv
+0.12.10, puis déplacement du dossier **avec son Python géré** vers un chemin
+contenant espaces et accent. Le script d’installation était rendu indisponible
+avant le déplacement. Après démarrage par le lanceur, `/health` et `/models`
+répondent HTTP 200 sans SDXL, et `/v1/embeddings` répond HTTP 200 avec un embedding
+BGE Metal de 1024 dimensions. Les téléchargements Hugging Face étaient désactivés
+et le proxy de téléchargement inaccessible. Les **36 683 fichiers des paquets**
+(hors caches bytecode) ont conservé taille et date de modification ; une sentinelle
+dans `.venv` a été conservée. Aucun poids ni dossier utilisateur n’a été modifié.
+L’inventaire du dossier de test, sans poids PuLID/AntelopeV2, signale correctement
+ces deux absences avec un code non nul, sans erreur de parcours du Python déplacé.
+L’inventaire des modèles existants sur le SSD a également réussi depuis ce Python
+déplacé, en lecture seule et avec les sorties de contrôle dans `/tmp`.
+
+Suite : **265 tests réussis, 3 tests d’intégration lourde ignorés**. Les tests
+couvrent deux déplacements successifs, backend/frontend, production/développement,
+Python interne/externe, métadonnées Windows, refus des versions/verrous incompatibles
+et sélection du Python par le helper PowerShell réel (PowerShell 7.5.2 sur macOS).
+Le démarrage du Python Windows et les DLL CUDA après déplacement restent à vérifier
+sur Windows natif. Le déplacement entre
+OS/architectures et celui indépendant d’un dossier de modèles externe ne sont pas
+pris en charge automatiquement.

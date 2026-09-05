@@ -6,11 +6,7 @@ unset DYLD_LIBRARY_PATH DYLD_FALLBACK_LIBRARY_PATH DYLD_FRAMEWORK_PATH DYLD_FALL
 
 PROJECT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 export PULID_PROJECT_ROOT="${PROJECT_DIR}"
-VENV_PYTHON="${PROJECT_DIR}/.venv/bin/python"
-if [[ ! -x "${VENV_PYTHON}" ]]; then
-  echo "Python absent ou dossier déplacé : ${VENV_PYTHON}. Relancez ./install_macos.sh." >&2
-  exit 1
-fi
+source "${PROJECT_DIR}/scripts/prepare_runtime_macos.sh"
 cd "${PROJECT_DIR}"
 unset PYTHONHOME PYTHONPATH
 if ! "${VENV_PYTHON}" -I "${PROJECT_DIR}/scripts/check_environment.py"; then
