@@ -7,12 +7,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import json
+import logging
 from pathlib import Path
-import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pulid_app.config import Krea2Config
 from pulid_app.exceptions import ModelLoadError, ModelNotFoundError
+
+if TYPE_CHECKING:
+    from pulid_app.models.quantized import WeightLayout
 
 
 def require_krea_file(path: Path, action: str) -> None:
@@ -28,7 +31,7 @@ def require_krea_file(path: Path, action: str) -> None:
 
 def validate_krea2_assets(config: Krea2Config) -> None:
     for path in (config.checkpoint, config.text_encoder):
-        require_krea_file(path, "Déposez manuellement les poids BF16/FP16/FP32 indiqués dans la configuration.")
+        require_krea_file(path, "Déposez manuellement les poids BF16/FP16/FP32 ou quantifiés compatibles indiqués dans la configuration.")
         if path.suffix.lower() != ".safetensors":
             raise ModelLoadError(f"Format attendu .safetensors : {path}.")
     require_krea_file(config.vae, "Relancez pulid-install --krea2-only pour installer le VAE.")
@@ -83,19 +86,13 @@ def text_encoder_key(key: str) -> str | None:
     return key
 
 
-def inspect_weight_format(path: Path) -> None:
-    """Lit seulement l'en-tête avant toute allocation d'un gros modèle."""
+def inspect_weight_format(path: Path, *, allow_quantized: bool = False) -> WeightLayout:
+    """Valide l'en-tête et les petits descripteurs avant allocation du modèle."""
     from safetensors import safe_open
+    from pulid_app.models.quantized import inspect_layout
 
     with safe_open(str(path), framework="pt", device="cpu") as weights:
-        for key in weights.keys():
-            dtype = weights.get_slice(key).get_dtype()
-            if dtype not in {"F16", "BF16", "F32"} or re.search(r"(?:scale_weight|weight_scale|quantization|comfy_quant)", key):
-                raise ModelLoadError(
-                    f"Poids quantifiés non pris en charge dans {path} ({key}, {dtype}). "
-                    "Fournissez manuellement une version BF16/FP16/FP32 ; les formats "
-                    "ComfyUI FP8 scaled, INT8 et NVFP4 ne sont pas convertis implicitement."
-                )
+        return inspect_layout(weights, path, allow_quantized=allow_quantized)
 
 
 def load_safetensors_module(
@@ -106,30 +103,76 @@ def load_safetensors_module(
     from accelerate.utils import set_module_tensor_to_device
     from safetensors import safe_open
     import torch
+    from pulid_app.models.quantized import QuantizedLinear, inspect_layout
 
     expected = module.state_dict()
     with safe_open(str(path), framework="pt", device="cpu") as weights:
+        layout = inspect_layout(weights, path, allow_quantized=True)
         mapping: dict[str, str] = {}
         for source in weights.keys():
+            if source in layout.auxiliary:
+                continue
             target = key_mapper(source)
             if target is None:
                 continue
             if target not in expected or target in mapping:
                 raise ModelLoadError(f"Clé incompatible ou dupliquée dans {path} : {source} → {target}.")
-            shape = tuple(weights.get_slice(source).get_shape())
+            spec = layout.quantized.get(source)
+            shape = spec.shape if spec else tuple(weights.get_slice(source).get_shape())
             wanted = tuple(expected[target].shape)
             # La modulation native est aplatie (6 * hidden_size).
             if shape != wanted and not (target.endswith(".scale_shift_table") and shape == (expected[target].numel(),)):
                 raise ModelLoadError(f"Dimensions incompatibles dans {path} : {source}, {shape} au lieu de {wanted}.")
+            if spec and (target.rsplit(".", 1)[-1] != "weight" or not isinstance(module.get_submodule(target.rpartition(".")[0]), torch.nn.Linear)):
+                raise ModelLoadError(f"La quantification de {path} : {source} exige une couche Linear compatible.")
             mapping[target] = source
         missing = expected.keys() - mapping.keys()
         if missing:
             raise ModelLoadError(f"Poids incomplets dans {path} : {', '.join(sorted(missing)[:8])}. Fournissez le checkpoint complet compatible.")
+        # Remplacer seulement après validation complète, sans jamais créer une
+        # copie BF16/FP16 de l'ensemble des matrices quantifiées.
         for target, source in mapping.items():
+            if source in layout.quantized:
+                location = target.rpartition(".")[0]
+                replacement = QuantizedLinear(module.get_submodule(location), weights, source, layout.quantized[source])
+                if location:
+                    module.set_submodule(location, replacement)
+                else:
+                    module = replacement
+        for target, source in mapping.items():
+            if source in layout.quantized:
+                continue
             value = weights.get_tensor(source).reshape(expected[target].shape)
             target_dtype = torch.float32 if keep_norm_fp32 and "norm" in target else dtype
             set_module_tensor_to_device(module, target, "cpu", value=value, dtype=target_dtype)
+    if layout.quantized:
+        logging.getLogger(__name__).info(
+            "%s : poids %s conservés compactés, calcul/déquantification par couche.",
+            path, ", ".join(sorted({spec.format for spec in layout.quantized.values()})),
+        )
     return module.eval().requires_grad_(False)
+
+
+def configure_krea2_memory(pipeline: Any, *, device: str, offload: str, dtype: Any) -> None:
+    """Garde un composant compacté en VRAM s'il reste une marge pour le calcul."""
+    import torch
+    from pulid_app.models.quantized import QuantizedLinear
+
+    if offload != "model_cpu_offload":
+        pipeline.to(device)
+        return
+    models = (pipeline.transformer, pipeline.text_encoder, pipeline.vae)
+    resident = max(sum(t.numel() * t.element_size() for t in model.parameters()) for model in models)
+    scratch = max((layer.in_features * layer.out_features * torch.empty((), dtype=dtype).element_size()
+                   for model in models for layer in model.modules() if isinstance(layer, QuantizedLinear)), default=0)
+    free_bytes, _ = torch.cuda.mem_get_info(torch.device(device))
+    # Activations, VAE tuilé et intermédiaires de déquantification bornés.
+    required = resident + scratch + 2 * 1024**3
+    if required > free_bytes:
+        logging.getLogger(__name__).info("Krea 2 : offload par sous-module (VRAM disponible insuffisante pour un composant entier).")
+        pipeline.enable_sequential_cpu_offload(device=device)
+    else:
+        pipeline.enable_model_cpu_offload(device=device)
 
 
 def workflow_pipeline(**components: Any) -> Any:
@@ -155,8 +198,9 @@ def load_krea2_pipeline(config: Krea2Config, *, device: str, dtype: Any, offload
         from safetensors.torch import load_file
         from transformers import AutoTokenizer, Qwen3VLTextConfig, Qwen3VLTextModel
 
-        for path in (config.checkpoint, config.text_encoder, config.vae):
-            inspect_weight_format(path)
+        for path in (config.checkpoint, config.text_encoder):
+            inspect_weight_format(path, allow_quantized=True)
+        inspect_weight_format(config.vae)
         raw = json.loads((config.text_encoder_config_dir / "config.json").read_text(encoding="utf-8"))
         text_config = Qwen3VLTextConfig(**raw.get("text_config", raw))
         if (text_config.hidden_size, text_config.num_hidden_layers) != (2560, 36):
@@ -187,10 +231,7 @@ def load_krea2_pipeline(config: Krea2Config, *, device: str, dtype: Any, offload
             is_distilled=True,
         )
         pipeline.vae.enable_tiling()
-        if offload == "model_cpu_offload":
-            pipeline.enable_model_cpu_offload(device=device)
-        else:
-            pipeline.to(device)
+        configure_krea2_memory(pipeline, device=device, offload=offload, dtype=dtype)
         return pipeline
     except ModelLoadError:
         raise

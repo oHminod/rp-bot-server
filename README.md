@@ -617,15 +617,42 @@ Le VAE est téléchargé depuis
 est signalé ; il n'est pas remplacé automatiquement. Les requêtes HTTP restent hors ligne.
 
 Formats pris en charge : checkpoints `.safetensors` **BF16, FP16 ou FP32**,
-clés natives Krea 2 ou Diffusers, et encodeur texte Qwen3-VL-4B en fichier unique
-(clés de la branche texte HF ou ComfyUI). Aucun poids converti n'est écrit sur disque.
-Les fichiers **NVFP4/INT8 et FP8 scaled du workflow de référence ne sont pas pris
-en charge** par ce backend autonome : fournir manuellement leurs variantes
-BF16/FP16/FP32. Ils sont refusés avant l'allocation du modèle plutôt que chargés
-avec des valeurs numériques incorrectes. Krea 2 en précision pleine exige
-beaucoup de RAM/VRAM ; la disponibilité MPS/CUDA ne garantit pas que le modèle
-entre en mémoire sur une machine donnée. CUDA accepte `--offload model_cpu_offload` ;
-MPS et CPU utilisent `--offload none` (CPU en float32).
+**NVFP4 Comfy** (E2M1 compacté, échelles par blocs de 16 et échelle globale),
+et **FP8 E4M3 scaled Comfy**. Les clés peuvent être natives Krea 2 ou Diffusers ;
+l'encodeur Qwen3-VL-4B doit être un fichier unique avec les clés de sa branche
+texte HF ou ComfyUI. Le VAE reste en BF16/FP16/FP32.
+
+Le format est identifié par le contenu, indépendamment du nom du fichier :
+le nom par défaut `qwen3vl_4b_bf16.safetensors` accepte aussi un encodeur FP8.
+Les déclarations `_quantization_metadata` version 1.0 et les marqueurs
+`comfy_quant` sont reconnus, y compris lorsque seul le nom des poids porte
+le préfixe `model.diffusion_model.`. Une échelle absente, des dimensions
+incompatibles ou un format inconnu produisent une erreur explicite avant
+le chargement du composant. INT8, ConvRot, MXFP8 et les anciennes variantes
+FP8 sans ces déclarations ne sont pas pris en charge.
+
+**Les poids restent quantifiés en RAM et en VRAM.** Les couches NVFP4 sont
+déquantifiées temporairement au moment de leur calcul ; aucune copie complète
+du modèle en BF16/FP16 n'est créée, ni conservée sur disque. Les couches FP8
+utilisent le calcul CUDA natif sur Ada (dont RTX 4070 SUPER) ou plus récent
+si le noyau et les dimensions le permettent, avec un repli par couche.
+Le marqueur `full_precision_matrix_mult` est respecté. Cette stratégie suit
+le principe de stockage compact et de calcul à la demande de ComfyUI, sans
+en importer le runtime. L'accélération NVFP4 native Blackwell n'est pas utilisée.
+
+Pour une carte CUDA de 12 Go, lancer le serveur avec :
+
+```powershell
+.\.venv\Scripts\pulid-server.exe --device cuda --offload model_cpu_offload
+```
+
+Ce mode charge successivement Qwen, Krea puis le VAE. Si un composant compacté
+et la marge de calcul estimée dépassent la VRAM libre, Krea utilise l'offload
+par sous-module d'Accelerate. Les transferts des couches quantifiées restent
+compactés. La marge est une estimation, pas une garantie pour toutes les
+résolutions ; réduire la résolution si la mémoire manque. `--offload none`
+conserve tous les composants sur le device. MPS et CPU utilisent ce dernier
+mode, avec déquantification temporaire par couche (CPU en float32).
 
 Les quatre chemins sont centralisés dans la section `krea2` de
 `config/default.yaml` et `config/local.yaml`, relatifs à `models_root`.
@@ -649,7 +676,15 @@ pour les champs, les limites, les en-têtes et les erreurs.
 
 Références techniques : [Krea 2 officiel](https://github.com/krea-ai/krea-2),
 [pipeline Diffusers](https://github.com/huggingface/diffusers/blob/v0.39.0/src/diffusers/pipelines/krea2/pipeline_krea2.py),
-[scheduler beta de référence](https://github.com/Comfy-Org/ComfyUI/blob/master/comfy/samplers.py).
+[scheduler beta de référence](https://github.com/Comfy-Org/ComfyUI/blob/master/comfy/samplers.py),
+[format NVFP4](https://github.com/Comfy-Org/comfy-quants/blob/main/docs/formats/nvfp4.md).
 Les tests utilisent des composants factices et de petits composants Diffusers
-aux poids aléatoires ; aucune génération avec les poids Krea réels n'est possible
-avant leur installation manuelle.
+avec des poids synthétiques, y compris les formats quantifiés et l'offload.
+Pour vérifier les noyaux CUDA sur le PC, les tests ne téléchargent aucun modèle :
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_quantized_krea2.py -q
+```
+
+Les tests GPU sont ignorés lorsque le matériel correspondant est absent.
+Une génération avec les poids réels nécessite leur installation manuelle.

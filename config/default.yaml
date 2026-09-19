@@ -36,6 +36,8 @@ text_embedding:
 
 krea2:
   # Poids locaux fournis manuellement, indépendants de SDXL et PuLID.
+  # BF16/FP16/FP32, NVFP4 Comfy ou FP8 E4M3 scaled déclarés dans le fichier.
+  # Les poids quantifiés restent compactés ; le nom du fichier n'impose pas le dtype.
   checkpoint: krea2/checkpoints/krea2.safetensors
   text_encoder: text_encoders/qwen3vl/qwen3vl_4b_bf16.safetensors
   # Config et tokenizer Qwen3-VL-4B-Instruct, fournis manuellement aussi.

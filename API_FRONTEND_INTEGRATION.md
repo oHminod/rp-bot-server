@@ -779,6 +779,13 @@ les erreurs de validation FastAPI utilisent une liste dans `detail`.
 Les messages de modèles absents/incompatibles indiquent les chemins à corriger.
 Aucun téléchargement n'est effectué pendant une requête HTTP.
 
+Le chargement accepte aussi les poids NVFP4 Comfy et FP8 E4M3 scaled déclarés
+dans leurs métadonnées. Ils restent compactés en mémoire : déquantification
+temporaire par couche, ou calcul FP8 natif sur CUDA compatible. Le serveur
+ne crée aucun fichier de poids converti. Cette prise en charge ne change pas
+les paramètres ni la réponse HTTP. Les formats non pris en charge ou les
+échelles manquantes suivent l'erreur de chargement `500` décrite ci-dessus.
+
 Krea est sérialisé avec toutes les générations SDXL et tous les embeddings BGE,
 y compris en mode CUDA concurrent. Après les requêtes en cours, SDXL et BGE sont
 déchargés avant Krea. Krea est libéré à la fin de chaque requête, succès ou erreur.
