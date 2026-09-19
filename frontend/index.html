@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="Interface locale de génération d'images avec PuLID et SDXL."
+      content="Interface locale de génération d'images avec SDXL, PuLID et Krea v2."
     />
     <title>PuLID Studio</title>
     <link rel="stylesheet" href="styles.css" />
@@ -19,7 +19,7 @@
           <span class="brand-mark" aria-hidden="true">P</span>
           <span>
             <strong>PuLID Studio</strong>
-            <small>Génération d’identité locale</small>
+            <small>Génération d’images locale</small>
           </span>
         </a>
         <div class="connection-state" id="connectionState" role="status">
@@ -30,11 +30,11 @@
 
       <main>
         <section class="intro" aria-labelledby="pageTitle">
-          <p class="eyebrow">SDXL + PuLID</p>
+          <p class="eyebrow" id="engineEyebrow">SDXL + PuLID</p>
           <h1 id="pageTitle">Créez une image qui garde son identité.</h1>
           <p>
-            Ajoutez un portrait de référence, décrivez la scène et ajustez précisément
-            chaque paramètre de génération exposé par l’API.
+            Choisissez SDXL pour préserver une identité, ou Krea v2 pour créer
+            une image à partir de votre description.
           </p>
         </section>
 
@@ -71,7 +71,16 @@
               <p><span aria-hidden="true">*</span> Champs obligatoires</p>
             </div>
 
-            <fieldset class="form-section">
+            <label class="field engine-picker" for="engine">
+              <span>Moteur de génération</span>
+              <select id="engine" name="engine" aria-describedby="engineHint">
+                <option value="sdxl">SDXL + PuLID · avec identité</option>
+                <option value="krea2">Krea v2 · texte vers image</option>
+              </select>
+              <small id="engineHint" aria-live="polite">Utilise votre portrait de référence.</small>
+            </label>
+
+            <fieldset class="form-section" data-sdxl-only>
               <legend>Identité</legend>
               <label class="upload-zone" id="uploadZone" for="reference">
                 <input
@@ -125,7 +134,7 @@
                 <small class="character-count"><span id="promptCount">0</span> / 4000</small>
               </label>
 
-              <div class="negative-header">
+              <div class="negative-header" data-sdxl-only>
                 <label class="field" for="negativeMode">
                   <span>Prompt négatif</span>
                   <select id="negativeMode" name="negative_mode">
@@ -136,7 +145,7 @@
                 </label>
               </div>
 
-              <label class="field" id="negativePromptField" for="negativePrompt" hidden>
+              <label class="field" id="negativePromptField" data-sdxl-only for="negativePrompt" hidden>
                 <span>Éléments à éviter</span>
                 <textarea
                   id="negativePrompt"
@@ -163,14 +172,14 @@
               </summary>
 
               <div class="advanced-content">
-                <label class="field advanced-model" for="model">
+                <label class="field advanced-model" for="model" data-sdxl-only>
                   <span>Modèle SDXL <b aria-hidden="true">*</b></span>
                   <select id="model" name="model" required disabled>
                     <option value="">Chargement des modèles…</option>
                   </select>
                 </label>
 
-                <div class="toggle-row">
+                <div class="toggle-row" data-sdxl-only>
                   <span>
                     <strong>Clip skip 2</strong>
                     <small>Utilise l’avant-dernière couche alternative des encodeurs.</small>
@@ -195,12 +204,18 @@
                     <small>1 à 200</small>
                   </label>
 
-                  <label class="field" for="strength">
+                  <label class="field" for="strength" data-sdxl-only>
                     <span>Force d’identité</span>
                     <input id="strength" name="strength" type="number" value="0.8" min="0" step="0.05" />
                     <small>0 ou plus</small>
                   </label>
                 </div>
+
+                <label class="field" for="denoise" data-krea2-only hidden>
+                  <span>Denoise</span>
+                  <input id="denoise" name="denoise" type="number" value="1" min="0.01" max="1" step="0.01" disabled />
+                  <small>1 : diffusion complète · 0,01 à 1</small>
+                </label>
 
                 <div class="two-columns">
                   <label class="field" for="method">
@@ -280,6 +295,7 @@
                   </optgroup>
                   <optgroup label="Paysage">
                     <option value="1152x896">1152 × 896</option>
+                    <option value="1248x832">1248 × 832 · Krea v2</option>
                     <option value="1216x832">1216 × 832</option>
                     <option value="1344x768">1344 × 768</option>
                     <option value="1536x640">1536 × 640</option>
@@ -301,7 +317,7 @@
               </div>
               <img
                 id="generatedImage"
-                alt="Image générée par PuLID"
+                alt="Image générée"
                 role="button"
                 tabindex="0"
                 aria-label="Agrandir l’image générée"
@@ -339,7 +355,7 @@
         >
           ×
         </button>
-        <img id="lightboxImage" alt="Image générée par PuLID agrandie" />
+        <img id="lightboxImage" alt="Image générée agrandie" />
       </dialog>
     </div>
   </body>

@@ -225,6 +225,13 @@ def test_discovery_endpoints_are_lightweight_and_versioned(tmp_path: Path) -> No
         "version": __version__,
         "api_contract_version": API_CONTRACT_VERSION,
         "capabilities": {
+            "krea2_generation": {
+                "enabled": True,
+                "generation_endpoint": "/generate/krea2",
+                "identity_transfer": False,
+                "samplers": ["euler"],
+                "schedulers": ["beta"],
+            },
             "image_generation": {
                 "enabled": True,
                 "catalog_endpoint": "/models",

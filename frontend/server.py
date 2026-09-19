@@ -33,6 +33,9 @@ class FrontendRequestHandler(SimpleHTTPRequestHandler):
         super().__init__(*args, **kwargs)
 
     def do_GET(self) -> None:
+        if self.path == "/api/capabilities":
+            self._proxy("/capabilities")
+            return
         if self.path == "/api/models":
             self._proxy("/models")
             return
@@ -45,6 +48,9 @@ class FrontendRequestHandler(SimpleHTTPRequestHandler):
         super().do_GET()
 
     def do_POST(self) -> None:
+        if self.path == "/api/generate/krea2":
+            self._proxy("/generate/krea2")
+            return
         if self.path == "/api/generate":
             self._proxy("/generate")
             return
@@ -73,6 +79,7 @@ class FrontendRequestHandler(SimpleHTTPRequestHandler):
                 "Content-Disposition",
                 "X-Generation-Seed",
                 "X-SDXL-Model",
+                "X-Generation-Model",
                 "X-Sampling-Method",
                 "X-Sigma-Schedule",
             ):

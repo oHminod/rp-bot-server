@@ -36,6 +36,7 @@ usages avancés. L’ensemble fonctionne sans ComfyUI.
   - [3. Connecter le service d’image](#3-connecter-le-service-dimage)
   - [4. Générer depuis une conversation](#4-générer-depuis-une-conversation)
 - [Frontend autonome](#frontend-autonome)
+- [Krea v2 sans identité](#krea-v2-sans-identité)
 - [Embeddings de texte pour rp-bot](#embeddings-de-texte-pour-rp-bot)
 - [Vérifier l’installation](#vérifier-linstallation)
 - [Ajouter un checkpoint SDXL](#ajouter-un-checkpoint-sdxl)
@@ -572,3 +573,83 @@ pytest -m unit
 
 AntelopeV2 est distribué pour la recherche non commerciale. Consultez la
 licence InsightFace avant tout autre usage.
+
+
+## Krea v2 sans identité
+
+Le serveur fournit `POST /generate/krea2`, basé sur le workflow
+`krea2_simple.json` (copie fournie dans Downloads ; `/mnt/data` absent sur macOS).
+Il utilise Krea 2, Qwen3-VL-4B et le VAE Qwen Image via Diffusers/Transformers,
+sans ComfyUI, PuLID ni InsightFace. Les dépendances d'inférence verrouillées du
+projet incluent déjà les classes nécessaires.
+
+Sur une installation existante, préparer uniquement les composants Krea :
+
+```bash
+.venv/bin/pulid-install --krea2-only --models-root /Volumes/SSD/Documents/PuLID_models
+```
+
+Sous Windows, utiliser `.venv\Scripts\pulid-install.exe` et la racine externe
+choisie à l'installation. L'installation générale prépare aussi ces dossiers.
+Le mode `--krea2-only` conserve les autres réglages de la configuration locale.
+
+```text
+PuLID_models/
+├── krea2/checkpoints/
+│   └── krea2.safetensors                   # fourni manuellement
+├── text_encoders/qwen3vl/
+│   ├── qwen3vl_4b_bf16.safetensors         # fourni manuellement
+│   └── config/                            # fourni manuellement
+│       ├── config.json
+│       ├── tokenizer.json
+│       └── tokenizer_config.json
+└── vae/
+    └── qwen_image_vae.safetensors          # téléchargé uniquement si absent
+```
+
+Les fichiers de `config/` doivent provenir de
+[Qwen/Qwen3-VL-4B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct/tree/main).
+Conservez également les éventuels fichiers annexes du tokenizer.
+Le checkpoint Krea et les poids Qwen3-VL ne sont **jamais téléchargés automatiquement**.
+Le VAE est téléchargé depuis
+[Comfy-Org/Qwen-Image_ComfyUI](https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/blob/main/split_files/vae/qwen_image_vae.safetensors),
+à une révision épinglée, avec contrôle SHA-256. Un fichier déjà présent et invalide
+est signalé ; il n'est pas remplacé automatiquement. Les requêtes HTTP restent hors ligne.
+
+Formats pris en charge : checkpoints `.safetensors` **BF16, FP16 ou FP32**,
+clés natives Krea 2 ou Diffusers, et encodeur texte Qwen3-VL-4B en fichier unique
+(clés de la branche texte HF ou ComfyUI). Aucun poids converti n'est écrit sur disque.
+Les fichiers **NVFP4/INT8 et FP8 scaled du workflow de référence ne sont pas pris
+en charge** par ce backend autonome : fournir manuellement leurs variantes
+BF16/FP16/FP32. Ils sont refusés avant l'allocation du modèle plutôt que chargés
+avec des valeurs numériques incorrectes. Krea 2 en précision pleine exige
+beaucoup de RAM/VRAM ; la disponibilité MPS/CUDA ne garantit pas que le modèle
+entre en mémoire sur une machine donnée. CUDA accepte `--offload model_cpu_offload` ;
+MPS et CPU utilisent `--offload none` (CPU en float32).
+
+Les quatre chemins sont centralisés dans la section `krea2` de
+`config/default.yaml` et `config/local.yaml`, relatifs à `models_root`.
+Ils peuvent être surchargés par `PULID_KREA2_CHECKPOINT`,
+`PULID_KREA2_TEXT_ENCODER`, `PULID_KREA2_TEXT_ENCODER_CONFIG_DIR` et
+`PULID_KREA2_VAE`. Les chemins absolus doivent rester sous la racine des modèles.
+Une ancienne configuration sans section `krea2` reçoit ces chemins par défaut.
+
+Dans le **frontend léger**, sélectionnez « Krea v2 · texte vers image » dans
+« Moteur de génération ». Le portrait, le personnage et les contrôles d'identité
+disparaissent. Entrez le prompt puis générez : valeurs initiales 1248 × 832,
+10 steps, CFG 1, Euler, Beta, denoise 1. Les réglages de chaque moteur sont
+mémorisés séparément. Krea reste accessible même si aucun checkpoint SDXL n'est
+installé. L'aperçu n'est pas sauvegardé automatiquement ; le bouton de
+téléchargement reste disponible.
+
+L'API renvoie le PNG directement en mémoire, sans écrire dans `outputs/` ni créer
+de JSON/cache d'identité. **rp-bot conserve les images reçues**, comme avec SDXL.
+Voir [le contrat HTTP](API_FRONTEND_INTEGRATION.md#génération-krea-v2-sans-identité)
+pour les champs, les limites, les en-têtes et les erreurs.
+
+Références techniques : [Krea 2 officiel](https://github.com/krea-ai/krea-2),
+[pipeline Diffusers](https://github.com/huggingface/diffusers/blob/v0.39.0/src/diffusers/pipelines/krea2/pipeline_krea2.py),
+[scheduler beta de référence](https://github.com/Comfy-Org/ComfyUI/blob/master/comfy/samplers.py).
+Les tests utilisent des composants factices et de petits composants Diffusers
+aux poids aléatoires ; aucune génération avec les poids Krea réels n'est possible
+avant leur installation manuelle.

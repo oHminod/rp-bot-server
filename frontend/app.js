@@ -8,6 +8,10 @@ const storage = globalThis.PuLIDStorage;
 const wideLayout = window.matchMedia(WIDE_LAYOUT_QUERY);
 
 const state = {
+  engine: "sdxl",
+  engineSettings: {},
+  ready: false,
+  inventoryRequest: 0,
   inventory: null,
   resultUrl: null,
   referenceUrl: null,
@@ -16,6 +20,9 @@ const state = {
 };
 
 const elements = {
+  engine: document.querySelector("#engine"),
+  engineHint: document.querySelector("#engineHint"),
+  denoise: document.querySelector("#denoise"),
   backendUrl: document.querySelector("#backendUrl"),
   reconnectButton: document.querySelector("#reconnectButton"),
   connectionState: document.querySelector("#connectionState"),
@@ -177,6 +184,7 @@ function fillSelect(select, items, selectedName = null) {
 }
 
 function refreshSigmaOptions(selectedName = elements.sigmas.value) {
+  if (state.engine === "krea2") return;
   if (!state.inventory) return;
   const method = state.inventory.sampling_methods.find(
     (item) => item.name === elements.method.value,
@@ -188,6 +196,8 @@ function refreshSigmaOptions(selectedName = elements.sigmas.value) {
 
 function collectSettings() {
   return {
+    engine: state.engine,
+    engineSettings: { ...state.engineSettings, [state.engine]: engineValues() },
     character: elements.character.value,
     prompt: elements.prompt.value,
     negativeMode: elements.negativeMode.value,
@@ -197,6 +207,7 @@ function collectSettings() {
     cfg: elements.cfg.value,
     steps: elements.steps.value,
     strength: elements.strength.value,
+    denoise: elements.denoise.value,
     method: elements.method.value,
     sigmas: elements.sigmas.value,
     seed: elements.seed.value,
@@ -207,6 +218,9 @@ function collectSettings() {
 
 function applySettings(settings) {
   if (!settings || typeof settings !== "object") return;
+  state.engine = settings.engine === "krea2" ? "krea2" : "sdxl";
+  elements.engine.value = state.engine;
+  state.engineSettings = settings.engineSettings ?? {};
   const textFields = {
     character: elements.character,
     prompt: elements.prompt,
@@ -214,6 +228,7 @@ function applySettings(settings) {
     cfg: elements.cfg,
     steps: elements.steps,
     strength: elements.strength,
+    denoise: elements.denoise,
     seed: elements.seed,
   };
   for (const [name, element] of Object.entries(textFields)) {
@@ -238,6 +253,47 @@ function applySettings(settings) {
   updateCount(elements.prompt, elements.promptCount);
   updateCount(elements.negativePrompt, elements.negativeCount);
   validateSeed();
+  updateEngineFields();
+}
+
+function engineValues() {
+  return { cfg: elements.cfg.value, steps: elements.steps.value,
+    resolution: elements.resolution.value, denoise: elements.denoise.value,
+    model: elements.model.value, method: elements.method.value, sigmas: elements.sigmas.value };
+}
+
+function updateEngineFields() {
+  const krea = state.engine === "krea2";
+  for (const [selector, hidden] of [["[data-sdxl-only]", krea], ["[data-krea2-only]", !krea]]) {
+    document.querySelectorAll(selector).forEach((group) => {
+      group.hidden = hidden;
+      if (group.tagName === "FIELDSET") group.disabled = hidden;
+      group.querySelectorAll("input, select, textarea, button").forEach((input) => { input.disabled = hidden; });
+    });
+  }
+  elements.model.disabled = krea || !state.inventory?.models?.length;
+  elements.reference.setCustomValidity("");
+  elements.engineHint.textContent = krea
+    ? "Décrivez votre image. Aucune photo ni identité nécessaire."
+    : "Utilise votre portrait de référence.";
+  document.querySelector("#engineEyebrow").textContent = krea ? "Krea v2" : "SDXL + PuLID";
+  document.querySelector("#pageTitle").textContent = krea
+    ? "De vos mots à l’image."
+    : "Créez une image qui garde son identité.";
+  updateNegativePromptMode();
+  queueColumnLayoutUpdate();
+}
+
+function changeEngine() {
+  state.engineSettings[state.engine] = engineValues();
+  state.engine = elements.engine.value;
+  const defaults = state.engine === "krea2"
+    ? { cfg: "1", steps: "10", resolution: "1248x832", denoise: "1" }
+    : { cfg: "7", steps: "20", resolution: "1024x1024", denoise: "1" };
+  const selected = state.engineSettings[state.engine] ?? defaults;
+  for (const name of ["cfg", "steps", "resolution", "denoise"]) elements[name].value = selected[name] ?? defaults[name];
+  updateEngineFields();
+  loadInventory({ ...collectSettings(), ...selected });
 }
 
 function persistSettings() {
@@ -253,6 +309,8 @@ function queueSettingsSave() {
 }
 
 async function loadInventory(preferredSettings = collectSettings()) {
+  const requestId = ++state.inventoryRequest;
+  state.ready = false;
   setError();
   setConnection("loading", "Connexion au backend…");
   elements.generateButton.disabled = true;
@@ -261,11 +319,27 @@ async function loadInventory(preferredSettings = collectSettings()) {
   elements.sigmas.disabled = true;
 
   try {
+    if (state.engine === "krea2") {
+      const response = await fetch("/api/capabilities", { cache: "no-store" });
+      if (!response.ok) throw new Error(`Découverte Krea v2 indisponible (${response.status}).`);
+      const capabilities = await response.json();
+      if (requestId !== state.inventoryRequest) return;
+      if (!capabilities.capabilities?.krea2_generation?.enabled) throw new Error("Ce backend ne propose pas Krea v2. Mettez-le à jour.");
+      fillSelect(elements.method, [{ name: "euler", label: "Euler" }]);
+      fillSelect(elements.sigmas, [{ name: "beta", label: "Beta" }]);
+      state.ready = true;
+      updateEngineFields();
+      elements.generateButton.disabled = state.generating;
+      persistSettings();
+      setConnection("connected", "Krea v2 disponible");
+      return;
+    }
     const response = await fetch("/api/models", { cache: "no-store" });
     if (!response.ok) {
       throw new Error(`Inventaire indisponible (${response.status}).`);
     }
     const inventory = await response.json();
+    if (requestId !== state.inventoryRequest) return;
     if (!Array.isArray(inventory.models) || inventory.models.length === 0) {
       throw new Error("Aucun checkpoint SDXL n’est disponible dans le backend.");
     }
@@ -273,10 +347,13 @@ async function loadInventory(preferredSettings = collectSettings()) {
     fillSelect(elements.model, inventory.models, preferredSettings.model);
     fillSelect(elements.method, inventory.sampling_methods, preferredSettings.method);
     refreshSigmaOptions(preferredSettings.sigmas);
-    elements.generateButton.disabled = false;
+    state.ready = true;
+    updateEngineFields();
+    elements.generateButton.disabled = state.generating;
     persistSettings();
     setConnection("connected", `${inventory.models.length} modèle${inventory.models.length > 1 ? "s" : ""} disponible${inventory.models.length > 1 ? "s" : ""}`);
   } catch (error) {
+    if (requestId !== state.inventoryRequest) return;
     state.inventory = null;
     elements.model.replaceChildren(new Option("Backend indisponible", ""));
     setConnection("error", "Backend indisponible");
@@ -291,7 +368,7 @@ function updateCount(input, output) {
 }
 
 function updateNegativePromptMode({ focus = false } = {}) {
-  const custom = elements.negativeMode.value === "custom";
+  const custom = state.engine !== "krea2" && elements.negativeMode.value === "custom";
   elements.negativePromptField.hidden = !custom;
   elements.negativePrompt.disabled = !custom;
   if (custom && focus) elements.negativePrompt.focus();
@@ -400,6 +477,14 @@ function validateSeed() {
 
 function buildGenerationBody() {
   const form = new FormData();
+  if (state.engine === "krea2") {
+    const [width, height] = elements.resolution.value.split("x");
+    const values = { prompt: elements.prompt.value.trim(), width, height,
+      seed: elements.seed.value.trim(), steps: elements.steps.value, cfg: elements.cfg.value,
+      sampler: elements.method.value, scheduler: elements.sigmas.value, denoise: elements.denoise.value };
+    for (const [name, value] of Object.entries(values)) if (value !== "") form.append(name, value);
+    return form;
+  }
   form.append("reference", elements.reference.files[0]);
   form.append("character", elements.character.value.trim());
   form.append("prompt", elements.prompt.value.trim());
@@ -449,7 +534,9 @@ function filenameFromResponse(response) {
 
 function showGenerating(active) {
   state.generating = active;
-  elements.generateButton.disabled = active || !state.inventory;
+  elements.generateButton.disabled = active || !state.ready;
+  elements.engine.disabled = active;
+  elements.reconnectButton.disabled = active;
   elements.generateButton.classList.toggle("loading", active);
   elements.generateButton.querySelector(".button-label").textContent = active
     ? "Génération en cours"
@@ -466,7 +553,7 @@ function resultFromResponse(response, blob) {
     blob,
     filename: filenameFromResponse(response),
     seed: response.headers.get("X-Generation-Seed") ?? "—",
-    model: response.headers.get("X-SDXL-Model") ?? elements.model.value,
+    model: response.headers.get("X-Generation-Model") ?? response.headers.get("X-SDXL-Model") ?? elements.model.value,
     method: response.headers.get("X-Sampling-Method") ?? elements.method.value,
     sigmas: response.headers.get("X-Sigma-Schedule") ?? elements.sigmas.value,
   };
@@ -508,21 +595,21 @@ function closeImageLightbox() {
 async function generate(event) {
   event.preventDefault();
   setError();
-  validateReference();
+  if (state.engine === "sdxl") validateReference();
   validateSeed();
 
   if (!elements.form.checkValidity()) {
     elements.form.reportValidity();
     return;
   }
-  if (!state.inventory || state.generating) return;
+  if (!state.ready || state.generating) return;
 
   persistSettings();
   showGenerating(true);
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const response = await fetch("/api/generate", {
+    const response = await fetch(state.engine === "krea2" ? "/api/generate/krea2" : "/api/generate", {
       method: "POST",
       body: buildGenerationBody(),
       signal: controller.signal,
@@ -573,6 +660,7 @@ async function clearLocalData() {
 }
 
 elements.reconnectButton.addEventListener("click", () => loadInventory(collectSettings()));
+elements.engine.addEventListener("change", changeEngine);
 elements.backendUrl.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     event.preventDefault();

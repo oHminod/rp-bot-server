@@ -1,17 +1,18 @@
 # API PuLID — intégration frontend
 
-Ce serveur HTTP local expose sept routes applicatives. Trois routes de découverte
+Ce serveur HTTP local expose huit routes applicatives. Trois routes de découverte
 stables sont prévues pour les lanceurs, installateurs et clients gérés :
 
 - `GET /health` confirme que le processus HTTP répond ;
 - `GET /version` expose la version PuLID et celle du contrat API ;
 - `GET /capabilities` décrit les fonctions et routes disponibles.
 
-Les quatre routes métier sont :
+Les cinq routes métier sont :
 
 - `GET /models` liste séparément les checkpoints SDXL, les méthodes de sampling
   et les courbes de sigmas compatibles ;
-- `POST /generate` génère une image et renvoie directement le PNG.
+- `POST /generate` génère une image SDXL avec identité et renvoie le PNG ;
+- `POST /generate/krea2` génère une image Krea v2 sans identité et renvoie le PNG ;
 - `GET /v1/models` expose le modèle d'embedding de texte local au format OpenAI ;
 - `POST /v1/embeddings` calcule un ou plusieurs embeddings au format OpenAI.
 
@@ -20,7 +21,7 @@ aucun modèle. Elles restent donc légères même lorsque les checkpoints sont
 absents ou temporairement indisponibles. La version PuLID provient des
 métadonnées du paquet générées depuis `project.version` dans `pyproject.toml`.
 Le contrat HTTP est versionné indépendamment en SemVer ; cette tranche expose
-`1.0.0`.
+`1.1.0`.
 
 La génération HTTP est séparée du chemin CLI avec sauvegarde. Elle ne crée ni
 image dans `outputs/`, ni manifeste JSON. L'image de référence, le
@@ -109,7 +110,7 @@ GET /health
 {
   "status": "ok",
   "version": "0.1.0",
-  "api_contract_version": "1.0.0"
+  "api_contract_version": "1.1.0"
 }
 ```
 
@@ -127,7 +128,7 @@ GET /version
 {
   "component": "pulid",
   "version": "0.1.0",
-  "api_contract_version": "1.0.0"
+  "api_contract_version": "1.1.0"
 }
 ```
 
@@ -144,8 +145,15 @@ GET /capabilities
 {
   "component": "pulid",
   "version": "0.1.0",
-  "api_contract_version": "1.0.0",
+  "api_contract_version": "1.1.0",
   "capabilities": {
+    "krea2_generation": {
+      "enabled": true,
+      "generation_endpoint": "/generate/krea2",
+      "identity_transfer": false,
+      "samplers": ["euler"],
+      "schedulers": ["beta"]
+    },
     "image_generation": {
       "enabled": true,
       "catalog_endpoint": "/models",
@@ -712,3 +720,78 @@ les DLL CUDA applicatives proviennent du `.venv` PuLID ; le pilote NVIDIA reste
 requis, et les variables d'un CUDA Toolkit global ne sont plus utilisées. En cas
 de DLL manquante, réparer l'installation PuLID ou son pilote ; les formats des
 réponses HTTP restent inchangés.
+
+
+## Génération Krea v2 sans identité
+
+```http
+POST /generate/krea2
+Content-Type: multipart/form-data
+```
+
+Les formulaires `application/x-www-form-urlencoded` sont également acceptés.
+Le frontend léger utilise le proxy `POST /api/generate/krea2` ;
+`GET /api/capabilities` relaie la découverte du backend.
+
+| Champ | Défaut | Validation |
+|---|---|---|
+| `prompt` | obligatoire | 1 à 4000 caractères, non vide après trim |
+| `width` | 1248 | entier, 64 à 2048, multiple de 16 |
+| `height` | 832 | entier, 64 à 2048, multiple de 16 |
+| `seed` | 0 | -1 ou 0 = aléatoire ; sinon 1 à 2^63−1 |
+| `steps` | 10 | entier, 1 à 200 |
+| `cfg` | 1 | nombre fini, 0 à 30 ; convention CFG ComfyUI |
+| `sampler` | `euler` | seule valeur implémentée : `euler` |
+| `scheduler` | `beta` | seule valeur implémentée : `beta` |
+| `denoise` | 1 | nombre fini, 0,01 à 1 |
+
+Les champs supplémentaires sont refusés, notamment `reference`, `character`,
+`strength`, `negative_prompt` et `model`. Le checkpoint se choisit côté serveur
+via `krea2.checkpoint`. Le conditionnement négatif est vide, comme dans le workflow.
+Le tokenizer utilise une fenêtre de 512 tokens et tronque les prompts plus longs.
+Aucun encodage facial, transfert d'identité ou cache d'identité n'est exécuté.
+
+Le scheduler beta reprend la grille de 10000 temps du workflow, avec
+alpha=beta=0,6 et un shift exponentiel fixe mu=1,15. Pour `denoise < 1`,
+les derniers intervalles du planning allongé sont utilisés et le bruit initial
+est réduit à la première sigma retenue. Ce paramètre n'ajoute pas de mode img2img.
+Le CFG est traduit en `guidance_scale = cfg - 1` pour Diffusers ; `cfg=1`
+ne calcule donc pas la branche négative. Les sorties ne sont pas garanties
+identiques pixel par pixel à ComfyUI.
+
+Succès : `200 image/png`, avec les en-têtes :
+
+- `Content-Disposition: attachment; filename="krea2_<horodatage>.png"` ;
+- `Cache-Control: no-store` ;
+- `X-Generation-Model: krea2` ;
+- `X-Generation-Seed` : seed effective, à conserver comme chaîne en JavaScript ;
+- `X-Sampling-Method: euler` et `X-Sigma-Schedule: beta`.
+
+Ces en-têtes sont exposés par CORS et relayés par le proxy du frontend.
+**L'endpoint ne crée aucun PNG, JSON ou autre sortie locale.** Le PNG reste en
+mémoire ; rp-bot est responsable de sa conservation. Le frontend léger conserve
+seulement l'aperçu en mémoire, avec un téléchargement manuel facultatif.
+
+Erreurs : `422` pour paramètres invalides, fichiers absents ou device indisponible ;
+`500` pour chargement incompatible/corrompu, panne d'inférence ou mémoire insuffisante.
+Les erreurs métier suivent `{"detail":{"error":"...","message":"..."}}` ;
+les erreurs de validation FastAPI utilisent une liste dans `detail`.
+Les messages de modèles absents/incompatibles indiquent les chemins à corriger.
+Aucun téléchargement n'est effectué pendant une requête HTTP.
+
+Krea est sérialisé avec toutes les générations SDXL et tous les embeddings BGE,
+y compris en mode CUDA concurrent. Après les requêtes en cours, SDXL et BGE sont
+déchargés avant Krea. Krea est libéré à la fin de chaque requête, succès ou erreur.
+Les routes SDXL/BGE rechargent ensuite leurs composants à la demande.
+
+```bash
+curl --fail-with-body http://127.0.0.1:12693/generate/krea2 \
+  -F 'prompt=Un phare au bord de la mer, lumière du matin' \
+  -F width=1248 -F height=832 -F seed=42 \
+  -F steps=10 -F cfg=1 -F sampler=euler -F scheduler=beta -F denoise=1 \
+  --output krea2.png
+```
+
+Ici `--output` enregistre le PNG sur la machine du client curl, pas sur le serveur.
+Voir le [guide d'installation Krea v2](README.md#krea-v2-sans-identité) pour les
+formats de poids compatibles et les chemins configurables.

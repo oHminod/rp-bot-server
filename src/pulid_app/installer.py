@@ -24,10 +24,17 @@ from rich.progress import (
 )
 
 from pulid_app.config import (
+    Krea2Config,
+    ConfigError,
+    KREA2_CHECKPOINT,
+    QWEN3VL_CHECKPOINT,
+    QWEN3VL_CONFIG_DIR,
+    QWEN_IMAGE_VAE,
     DEFAULT_CONFIG_PATH,
     DEFAULT_PULID_REVISION,
     LOCAL_CONFIG_PATH,
     PROJECT_ROOT,
+    load_config,
 )
 from pulid_app.models.pulid_assets import ensure_official_source
 from pulid_app.paths import (
@@ -105,6 +112,14 @@ BGE_CHECKPOINT = HuggingFaceAsset(
     repository="KimChen/bge-m3-GGUF",
     filename="bge-m3-q8_0.gguf",
     sha256="950f4a8e5e19477a6d3c26d2f162233c20002c601f75e4b002e3239997821167",
+)
+KREA2_VAE = HuggingFaceAsset(
+    name="VAE Qwen Image (Krea 2)",
+    relative_path=QWEN_IMAGE_VAE,
+    repository="Comfy-Org/Qwen-Image_ComfyUI",
+    filename="split_files/vae/qwen_image_vae.safetensors",
+    sha256="a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f",
+    revision="dfe60a0d63f0b946628080f070978594983b8b6e",
 )
 EVA_CLIP_REPOSITORY = "QuanSun/EVA-CLIP"
 EVA_CLIP_FILENAME = "EVA02_CLIP_L_336_psz14_s6B.pt"
@@ -742,6 +757,10 @@ def write_local_config(
         ) from exc
     if not isinstance(raw, dict) or not isinstance(raw.get("sdxl"), dict):
         raise InstallerError(f"Configuration par défaut invalide : {default_config}")
+    if destination.is_file():
+        existing = yaml.safe_load(destination.read_text(encoding="utf-8"))
+        if isinstance(existing, dict) and isinstance(existing.get("krea2"), dict):
+            raw["krea2"] = existing["krea2"]
     try:
         raw["models_root"] = models_root.resolve().relative_to(project_root.resolve()).as_posix()
     except ValueError:
@@ -773,6 +792,45 @@ def write_local_config(
     except OSError as exc:
         raise InstallerError(f"Impossible d'écrire {destination} : {exc}") from exc
     return destination
+
+
+def write_krea2_config(models_root: Path, *, destination: Path = LOCAL_CONFIG_PATH) -> Path:
+    """Ajoute Krea à une installation existante sans réinitialiser SDXL/BGE."""
+    source = destination if destination.is_file() else DEFAULT_CONFIG_PATH
+    raw = yaml.safe_load(source.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise InstallerError(f"Configuration invalide : {source}")
+    raw["models_root"] = str(models_root)
+    raw.setdefault("krea2", {
+        "checkpoint": KREA2_CHECKPOINT, "text_encoder": QWEN3VL_CHECKPOINT,
+        "text_encoder_config_dir": QWEN3VL_CONFIG_DIR, "vae": QWEN_IMAGE_VAE,
+    })
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_suffix(".yaml.tmp")
+    temporary.write_text(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    os.replace(temporary, destination)
+    return destination
+
+
+def prepare_krea2_assets(models_root: Path, config: Krea2Config, console: Console) -> None:
+    """Crée les dossiers manuels et télécharge seulement le VAE absent."""
+    for directory in (config.checkpoint.parent, config.text_encoder.parent, config.text_encoder_config_dir, config.vae.parent):
+        if not directory.resolve(strict=False).is_relative_to(models_root.resolve(strict=False)):
+            raise InstallerError(f"Les composants Krea doivent rester sous {models_root} : {directory}")
+        directory.mkdir(parents=True, exist_ok=True)
+    if config.vae.exists():
+        if not _matches(config.vae, KREA2_VAE.sha256):
+            raise InstallerError(f"VAE Qwen Image invalide : {config.vae}. Vérifiez le fichier ; aucun fichier existant n'est remplacé automatiquement.")
+        console.print(f"[green]✓[/] VAE Qwen Image déjà présent : {config.vae}")
+    else:
+        from dataclasses import replace
+
+        asset = replace(KREA2_VAE, relative_path=config.vae.relative_to(models_root).as_posix())
+        ensure_huggingface_asset(models_root, asset, console)
+    for label, path in (("Checkpoint Krea 2", config.checkpoint), ("Encodeur qwen3vl", config.text_encoder)):
+        state = "présent" if path.is_file() else "à fournir manuellement (BF16/FP16/FP32)"
+        console.print(f"{label} : {state} — {path}")
+    console.print(f"Config/tokenizer Qwen3-VL-4B-Instruct à fournir manuellement : {config.text_encoder_config_dir}")
 
 
 def prepare_required_assets(
@@ -809,6 +867,10 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Installe ou répare les modèles et configurations nécessaires à PuLID."
         )
+    )
+    parser.add_argument(
+        "--krea2-only", action="store_true",
+        help="Prépare uniquement Krea 2 : dossiers manuels et VAE manquant, sans SDXL/PuLID/BGE.",
     )
     parser.add_argument(
         "--models-root",
@@ -863,6 +925,11 @@ def run_installation(args: argparse.Namespace, console: Console) -> int:
         (models_root / relative).mkdir(parents=True, exist_ok=True)
 
     console.print(f"Racine des modèles : [bold cyan]{models_root}[/]")
+    if args.krea2_only:
+        local_config = write_krea2_config(models_root)
+        prepare_krea2_assets(models_root, load_config(local_config, models_root_override=models_root).krea2, console)
+        console.print(f"Configuration Krea 2 : {local_config}")
+        return 0
     antelope_ready = confirm_antelope_license(
         models_root,
         console,
@@ -886,6 +953,7 @@ def run_installation(args: argparse.Namespace, console: Console) -> int:
         antelope_ready=antelope_ready,
     )
     local_config = write_local_config(models_root, checkpoint)
+    prepare_krea2_assets(models_root, load_config(local_config, models_root_override=models_root).krea2, console)
     console.print()
     console.print("[bold green]Installation des modèles terminée.[/]")
     if checkpoint is None:
@@ -909,7 +977,7 @@ def main(argv: list[str] | None = None) -> int:
     console = Console()
     try:
         return run_installation(args, console)
-    except (InstallerError, OSError, PermissionError) as exc:
+    except (InstallerError, ConfigError, OSError, yaml.YAMLError) as exc:
         console.print(f"[bold red]Installation impossible :[/] {exc}")
         return 1
     except KeyboardInterrupt:

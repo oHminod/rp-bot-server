@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-API_CONTRACT_VERSION = "1.0.0"
+API_CONTRACT_VERSION = "1.1.0"
 
 
 def capabilities_payload(
@@ -19,6 +19,13 @@ def capabilities_payload(
         "version": application_version,
         "api_contract_version": API_CONTRACT_VERSION,
         "capabilities": {
+            "krea2_generation": {
+                "enabled": True,
+                "generation_endpoint": "/generate/krea2",
+                "identity_transfer": False,
+                "samplers": ["euler"],
+                "schedulers": ["beta"],
+            },
             "image_generation": {
                 "enabled": True,
                 "catalog_endpoint": "/models",

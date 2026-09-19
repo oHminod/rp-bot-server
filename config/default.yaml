@@ -34,6 +34,14 @@ text_embedding:
   # En mode --CPU : 0 = tous les CPU logiques pour le traitement par lots.
   threads: 0
 
+krea2:
+  # Poids locaux fournis manuellement, indépendants de SDXL et PuLID.
+  checkpoint: krea2/checkpoints/krea2.safetensors
+  text_encoder: text_encoders/qwen3vl/qwen3vl_4b_bf16.safetensors
+  # Config et tokenizer Qwen3-VL-4B-Instruct, fournis manuellement aussi.
+  text_encoder_config_dir: text_encoders/qwen3vl/config
+  vae: vae/qwen_image_vae.safetensors
+
 outputs_dir: ./outputs
 identity_cache_dir: ./cache/identity
 

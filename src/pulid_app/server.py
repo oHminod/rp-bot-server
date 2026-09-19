@@ -20,7 +20,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Response
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image, ImageOps, UnidentifiedImageError
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from pulid_app import __version__
 from pulid_app.api_contract import API_CONTRACT_VERSION, capabilities_payload
@@ -51,6 +51,7 @@ from pulid_app.paths import (
     resolve_sdxl_checkpoint,
 )
 from pulid_app.pipeline.generator import DEFAULT_NEGATIVE_PROMPT, ImageGenerator
+from pulid_app.pipeline.krea2 import Krea2Generator, Krea2Parameters
 
 
 LOGGER = logging.getLogger("uvicorn.error")
@@ -91,6 +92,43 @@ class OpenAIEmbeddingRequest(BaseModel):
     model: str = Field(min_length=1, max_length=255)
     input: str | list[str]
     encoding_format: Literal["float"] = "float"
+
+
+class Krea2Request(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    prompt: str = Field(min_length=1, max_length=4000)
+    width: int = Field(default=1248, ge=64, le=2048, multiple_of=16)
+    height: int = Field(default=832, ge=64, le=2048, multiple_of=16)
+    seed: int = Field(default=0, ge=-1, le=MAX_SEED)
+    steps: int = Field(default=10, ge=1, le=200)
+    cfg: float = Field(default=1, ge=0, le=30, allow_inf_nan=False)
+    sampler: Literal["euler"] = "euler"
+    scheduler: Literal["beta"] = "beta"
+    denoise: float = Field(default=1, ge=0.01, le=1, allow_inf_nan=False)
+
+
+class Krea2GenerationService:
+    def __init__(self, config: AppConfig, *, generator_factory: Callable[..., Any],
+                 device: str | None, dtype_name: str | None, offload_strategy: str | None,
+                 now_factory: Callable[[], datetime] | None, random_seed: Callable[[], int] | None) -> None:
+        self.config = config
+        self.generator_factory = generator_factory
+        self.options = dict(device=device, dtype_name=dtype_name, offload_strategy=offload_strategy)
+        self.now_factory = now_factory or (lambda: datetime.now(timezone.utc))
+        self.random_seed = random_seed
+
+    def generate(self, parameters: Krea2Parameters) -> GeneratedPayload:
+        parameters = replace(parameters, seed=resolve_generation_seed(parameters.seed, self.random_seed))
+        generator = self.generator_factory(self.config, **self.options)
+        try:
+            image, _metadata = generator.generate(parameters)
+            filename = generated_filename("krea2", self.now_factory())
+            output = BytesIO()
+            image.save(output, format="PNG")
+            content = output.getvalue()
+            return GeneratedPayload(content, filename, parameters.seed, "krea2", parameters.sampler, parameters.scheduler)
+        finally:
+            generator.close()
 
 
 def list_sdxl_models(config: AppConfig) -> list[dict[str, Any]]:
@@ -540,6 +578,7 @@ def create_app(
     dtype_name: str | None = None,
     offload_strategy: str | None = None,
     generator_factory: Callable[..., Any] = ImageGenerator,
+    krea2_generator_factory: Callable[..., Any] = Krea2Generator,
     embedding_model_factory: Callable[..., Any] = load_llama_cpp_embedding_model,
     embedding_memory_mode: str = "concurrent",
     now_factory: Callable[[], datetime] | None = None,
@@ -574,6 +613,11 @@ def create_app(
         device=embedding_device,
         model_factory=embedding_model_factory,
     )
+    krea2_service = Krea2GenerationService(
+        config, generator_factory=krea2_generator_factory, device=device,
+        dtype_name=dtype_name, offload_strategy=offload_strategy,
+        now_factory=now_factory, random_seed=random_seed,
+    )
 
     def prepare_generation_for_gpu() -> None:
         if normalized_embedding_mode in {"partial", "full"}:
@@ -602,6 +646,7 @@ def create_app(
         lifespan=lifespan,
     )
     app.state.generation_service = service
+    app.state.krea2_service = krea2_service
     app.state.text_embedding_service = embedding_service
     app.state.embedding_memory_mode = normalized_embedding_mode
     app.state.concurrent_cuda = concurrent_cuda
@@ -621,6 +666,7 @@ def create_app(
                 "Content-Disposition",
                 "X-Generation-Seed",
                 "X-SDXL-Model",
+                "X-Generation-Model",
                 "X-Sampling-Method",
                 "X-Sigma-Schedule",
             ],
@@ -786,6 +832,27 @@ def create_app(
                 "X-Generation-Seed": str(payload.seed),
                 "X-SDXL-Model": payload.model,
                 "X-Sampling-Method": payload.method,
+                "X-Sigma-Schedule": payload.sigmas,
+            },
+        )
+
+    @app.post("/generate/krea2", response_class=Response)
+    async def generate_krea2(request: Annotated[Krea2Request, Form()]) -> Response:
+        try:
+            parameters = Krea2Parameters(**request.model_dump())
+            # Ces verrous couvrent aussi le mode CUDA concurrent : Krea ne peut
+            # pas décharger BGE/SDXL pendant qu'une requête les utilise.
+            async with generation_lock, embedding_lock, accelerator_lock:
+                await run_in_threadpool(close_services)
+                payload = await run_in_threadpool(krea2_service.generate, parameters)
+        except (PuLIDAppError, OSError, RuntimeError, ValueError) as exc:
+            raise _http_error(exc) from exc
+        return Response(
+            content=payload.content, media_type="image/png",
+            headers={
+                "Content-Disposition": f'attachment; filename="{payload.filename}"',
+                "Cache-Control": "no-store", "X-Generation-Seed": str(payload.seed),
+                "X-Generation-Model": "krea2", "X-Sampling-Method": payload.method,
                 "X-Sigma-Schedule": payload.sigmas,
             },
         )

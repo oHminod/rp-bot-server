@@ -32,6 +32,7 @@ def test_python_installation_preserves_explicit_root(tmp_path, monkeypatch, via_
     monkeypatch.setattr(installer, "confirm_antelope_license", lambda root, *a, **kw: seen.append(root) or True)
     monkeypatch.setattr(installer, "select_sdxl_checkpoint", lambda root, *a, **kw: seen.append(root))
     monkeypatch.setattr(installer, "prepare_required_assets", lambda root, *a, **kw: seen.append(root))
+    monkeypatch.setattr(installer, "prepare_krea2_assets", lambda root, *a, **kw: None)
     write_config = installer.write_local_config
     config = tmp_path / "config/local.yaml"
     monkeypatch.setattr(installer, "write_local_config", lambda root, checkpoint: write_config(

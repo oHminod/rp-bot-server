@@ -241,3 +241,57 @@ def test_build_server_configures_static_root_and_backend(monkeypatch) -> None:
     assert captured["handler"].keywords["backend"].geturl() == (
         "http://127.0.0.1:12693"
     )
+
+
+def test_krea_proxy_preserves_png_and_generation_headers(monkeypatch) -> None:
+    from io import BytesIO
+    from urllib.parse import urlsplit
+    from frontend.server import FrontendRequestHandler
+    seen = {}
+    class BackendResponse:
+        status = 200
+        reason = "OK"
+        def read(self):
+            return b"png-response"
+        def getheader(self, key):
+            return {"Content-Type": "image/png", "X-Generation-Model": "krea2", "X-Generation-Seed": "42"}.get(key)
+    class Connection:
+        def __init__(self, *args, **kwargs): pass
+        def request(self, method, path, **kwargs):
+            seen.update(method=method, path=path, **kwargs)
+        def getresponse(self): return BackendResponse()
+        def close(self): seen["closed"] = True
+    monkeypatch.setattr("frontend.server.HTTPConnection", Connection)
+    handler = object.__new__(FrontendRequestHandler)
+    handler.path = "/api/generate/krea2"
+    handler.command = "POST"
+    handler.backend = urlsplit("http://127.0.0.1:12693")
+    body = b"prompt=hello&steps=10&cfg=1"
+    handler.headers = {"Content-Length": str(len(body)), "Content-Type": "application/x-www-form-urlencoded"}
+    handler.rfile = BytesIO(body)
+    handler.wfile = BytesIO()
+    response_headers = {}
+    handler.send_response = lambda *args: None
+    handler.send_header = lambda k, v: response_headers.update({k: v})
+    handler.end_headers = lambda: None
+    handler.do_POST()
+    assert seen["path"] == "/generate/krea2"
+    assert seen["body"] == body
+    assert seen["closed"]
+    assert handler.wfile.getvalue() == b"png-response"
+    assert response_headers["X-Generation-Model"] == "krea2"
+    assert response_headers["X-Generation-Seed"] == "42"
+
+
+def test_frontend_exposes_krea_fields_without_identity_payload() -> None:
+    html = (frontend_directory() / "index.html").read_text()
+    source = (frontend_directory() / "app.js").read_text()
+    parser = _FormFieldParser()
+    parser.feed(html)
+    assert 'value="krea2"' in html
+    assert parser.fields["denoise"]["value"] == "1"
+    krea_body = source.split('function buildGenerationBody()', 1)[1].split('return form;', 1)[0]
+    assert "sampler:" in krea_body and "scheduler:" in krea_body and "denoise:" in krea_body
+    assert 'form.append("reference"' not in krea_body
+    assert 'form.append("character"' not in krea_body
+    assert 'fetch("/api/capabilities"' in source

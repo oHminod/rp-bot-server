@@ -54,6 +54,12 @@ summary,
   margin: 0 auto;
 }
 
+.engine-picker {
+  margin: 4px 0 24px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+
 .topbar {
   display: flex;
   align-items: center;
