@@ -17,6 +17,8 @@ from pulid_app.pipeline.memory import MemoryManager
 
 KREA2_SAMPLERS = ("euler",)
 KREA2_SCHEDULERS = ("beta",)
+KREA2_TEXT_SEQUENCE_LENGTH = 1024
+KREA2_MAX_PROMPT_CHARACTERS = 8000
 
 
 @dataclass(frozen=True)
@@ -32,8 +34,8 @@ class Krea2Parameters:
     denoise: float = 1.0
 
     def __post_init__(self) -> None:
-        if not isinstance(self.prompt, str) or not self.prompt.strip() or len(self.prompt) > 4000:
-            raise ValueError("prompt doit contenir de 1 à 4000 caractères non vides.")
+        if not isinstance(self.prompt, str) or not self.prompt.strip() or len(self.prompt) > KREA2_MAX_PROMPT_CHARACTERS:
+            raise ValueError(f"prompt doit contenir de 1 à {KREA2_MAX_PROMPT_CHARACTERS} caractères non vides.")
         for name in ("width", "height"):
             value = getattr(self, name)
             if type(value) is not int or not 64 <= value <= 2048 or value % 16:
@@ -192,7 +194,7 @@ class Krea2Generator:
                     width=parameters.width, height=parameters.height,
                     num_inference_steps=len(sigmas), sigmas=sigmas,
                     guidance_scale=parameters.cfg - 1, generator=generator,
-                    latents=latents, max_sequence_length=512,
+                    latents=latents, max_sequence_length=KREA2_TEXT_SEQUENCE_LENGTH,
                     callback_on_step_end=progress,
                 )
             logger.info("Krea 2 : image terminée en %.2f s (chargement inclus).", perf_counter() - started)

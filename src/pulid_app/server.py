@@ -51,7 +51,7 @@ from pulid_app.paths import (
     resolve_sdxl_checkpoint,
 )
 from pulid_app.pipeline.generator import DEFAULT_NEGATIVE_PROMPT, ImageGenerator
-from pulid_app.pipeline.krea2 import Krea2Generator, Krea2Parameters
+from pulid_app.pipeline.krea2 import KREA2_MAX_PROMPT_CHARACTERS, Krea2Generator, Krea2Parameters
 
 
 LOGGER = logging.getLogger("uvicorn.error")
@@ -96,7 +96,7 @@ class OpenAIEmbeddingRequest(BaseModel):
 
 class Krea2Request(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    prompt: str = Field(min_length=1, max_length=4000)
+    prompt: str = Field(min_length=1, max_length=KREA2_MAX_PROMPT_CHARACTERS)
     width: int = Field(default=1248, ge=64, le=2048, multiple_of=16)
     height: int = Field(default=832, ge=64, le=2048, multiple_of=16)
     seed: int = Field(default=0, ge=-1, le=MAX_SEED)

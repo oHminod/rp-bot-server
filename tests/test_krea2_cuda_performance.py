@@ -280,6 +280,6 @@ def test_real_cuda_attention_benchmark_at_workflow_resolution(runtime):
         pytest.skip("CUDA requis pour le benchmark 1248×832")
     from scripts.benchmark_krea2_cuda import benchmark_attention
     result = benchmark_attention(torch, torch.device("cuda:0"), 1)
-    assert result["query_shape"] == [1, 48, 4568, 128]
+    assert result["query_shape"] == [1, 48, 5080, 128]
     assert result["attention_ms"] > 0 and result["sdpa_operators"]
     assert not any("math" in name for name in result["sdpa_operators"])

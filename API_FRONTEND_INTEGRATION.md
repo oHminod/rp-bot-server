@@ -740,7 +740,7 @@ Le frontend léger utilise le proxy `POST /api/generate/krea2` ;
 
 | Champ | Défaut | Validation |
 |---|---|---|
-| `prompt` | obligatoire | 1 à 4000 caractères, non vide après trim |
+| `prompt` | obligatoire | 1 à 8000 caractères, non vide après trim |
 | `width` | 1248 | entier, 64 à 2048, multiple de 16 |
 | `height` | 832 | entier, 64 à 2048, multiple de 16 |
 | `seed` | 0 | -1 ou 0 = aléatoire ; sinon 1 à 2^63−1 |
@@ -753,7 +753,12 @@ Le frontend léger utilise le proxy `POST /api/generate/krea2` ;
 Les champs supplémentaires sont refusés, notamment `reference`, `character`,
 `strength`, `negative_prompt` et `model`. Le checkpoint se choisit côté serveur
 via `krea2.checkpoint`. Le conditionnement négatif est vide, comme dans le workflow.
-Le tokenizer utilise une fenêtre de 512 tokens et tronque les prompts plus longs.
+Le tokenizer utilise une fenêtre de 1024 tokens, soit environ 1019 tokens utiles
+pour le prompt et 5 tokens de suffixe. Les tokens supplémentaires sont transmis
+au modèle de diffusion ; le texte au-delà de cette fenêtre reste tronqué.
+Cette fenêtre est fixée côté serveur et n'est pas un paramètre HTTP. La limite
+de 8000 caractères est indépendante du budget de tokens. Le frontend adapte son
+compteur au moteur sélectionné ; SDXL conserve sa limite de 4000 caractères.
 Aucun encodage facial, transfert d'identité ou cache d'identité n'est exécuté.
 
 Le scheduler beta reprend la grille de 10000 temps du workflow, avec

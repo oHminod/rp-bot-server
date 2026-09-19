@@ -218,6 +218,54 @@ def test_http_explicit_parameters_and_multipart(app):
     assert (p.width, p.height, p.steps, p.cfg, p.denoise, p.seed) == (64, 80, 3, 0.5, 0.4, 42)
 
 
+@pytest.mark.parametrize("length,status", [(4001, 200), (8000, 200), (8001, 422)])
+def test_krea_extended_prompt_character_limit(app, length, status):
+    prompt = "x" * length
+    response = _request(app, "POST", "/generate/krea2",
+        data={"prompt": prompt, "width": 64, "height": 64})
+    assert response.status_code == status
+    if status == 200:
+        assert FakeKreaGenerator.instances[-1].parameters.prompt == prompt
+        assert Krea2Parameters(prompt).prompt == prompt
+    else:
+        assert not FakeKreaGenerator.instances
+        with pytest.raises(ValueError, match="8000"):
+            Krea2Parameters(prompt)
+
+
+def test_diffusion_consumes_text_tokens_after_position_512(tmp_path):
+    """La seconde moitié du conditionnement 1024 change le calcul du DiT."""
+    configure_external_model_caches(tmp_path)
+    import torch
+    from diffusers import Krea2Pipeline, Krea2Transformer2DModel
+    from pulid_app.pipeline.krea2 import KREA2_TEXT_SEQUENCE_LENGTH
+
+    torch.manual_seed(18)
+    transformer = Krea2Transformer2DModel(
+        num_layers=1, attention_head_dim=8, num_attention_heads=4, num_key_value_heads=2,
+        intermediate_size=64, timestep_embed_dim=16, text_hidden_dim=16, num_text_layers=2,
+        text_num_attention_heads=2, text_num_key_value_heads=2, text_intermediate_size=32,
+        num_layerwise_text_blocks=1, num_refiner_text_blocks=1, axes_dims_rope=(2, 2, 4),
+    ).eval()
+    assert KREA2_TEXT_SEQUENCE_LENGTH == 1024
+    context = torch.randn(1, KREA2_TEXT_SEQUENCE_LENGTH, 2, 16)
+    changed = context.clone()
+    changed[:, 512:] = torch.randn_like(changed[:, 512:])
+    mask = torch.ones(1, KREA2_TEXT_SEQUENCE_LENGTH, dtype=torch.bool)
+    kwargs = dict(hidden_states=torch.randn(1, 4, 64), timestep=torch.tensor([.5]),
+        position_ids=Krea2Pipeline.prepare_position_ids(KREA2_TEXT_SEQUENCE_LENGTH, 2, 2, torch.device("cpu")),
+        encoder_attention_mask=mask, return_dict=False)
+    with torch.inference_mode():
+        before = transformer(encoder_hidden_states=context, **kwargs)[0]
+        after = transformer(encoder_hidden_states=changed, **kwargs)[0]
+        assert torch.isfinite(after).all() and not torch.allclose(before, after)
+        # Quand ces mêmes positions sont masquées, elles cessent d'influencer l'image.
+        mask[:, 512:] = False
+        masked = transformer(encoder_hidden_states=context, **kwargs)[0]
+        masked_changed = transformer(encoder_hidden_states=changed, **kwargs)[0]
+        torch.testing.assert_close(masked, masked_changed)
+
+
 @pytest.mark.parametrize("invalid", [
     {"prompt": "   "}, {"width": "65"}, {"width": "2064"}, {"height": "8"},
     {"steps": "0"}, {"steps": "201"}, {"steps": "2.5"}, {"cfg": "nan"},
@@ -338,7 +386,7 @@ def test_generator_maps_cfg_and_scales_partial_noise(tmp_path, monkeypatch):
         assert calls[0]["sigmas"] == beta_sigmas(10, .5)
         assert torch.allclose(calls[0]["latents"], torch.full((1, 4, 64), shifted_sigma(beta_sigmas(10, .5)[0])))
         assert calls[0]["negative_prompt"] == ""
-        assert calls[0]["max_sequence_length"] == 512
+        assert calls[0]["max_sequence_length"] == 1024
     finally:
         generator.close()
 

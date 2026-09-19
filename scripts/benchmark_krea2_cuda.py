@@ -12,16 +12,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 
 def benchmark_attention(torch, device, runs: int) -> dict:
-    """Dimensions de la diffusion 1248×832 : 4056 tokens image + 512 texte."""
+    """Dimensions de la diffusion 1248×832 avec la fenêtre texte du pipeline."""
     from pulid_app.models.krea2_attention import krea2_sdpa
+    from pulid_app.pipeline.krea2 import KREA2_TEXT_SEQUENCE_LENGTH
 
-    tokens, heads, kv_heads, head_dim = 4568, 48, 12, 128
+    tokens, heads, kv_heads, head_dim = 4056 + KREA2_TEXT_SEQUENCE_LENGTH, 48, 12, 128
     # Même disposition non contiguë après projection/transposition que Diffusers.
     query = torch.randn(1, tokens, heads, head_dim, device=device, dtype=torch.float16).transpose(1, 2)
     key, value = (torch.randn(1, tokens, kv_heads, head_dim, device=device,
                              dtype=torch.float16).transpose(1, 2) for _ in range(2))
     mask = torch.ones(1, 1, 1, tokens, device=device, dtype=torch.bool)
-    mask[..., 64:512] = False
+    mask[..., 64:KREA2_TEXT_SEQUENCE_LENGTH] = False
     with torch.inference_mode():
         result = krea2_sdpa(query, key, value, mask)
         if not torch.isfinite(result).all().item():

@@ -731,7 +731,7 @@ complète et ne garantit pas une durée identique à ComfyUI :
 ```
 
 Pour mesurer **l'attention seule** aux dimensions du workflow 1248×832
-(4568 tokens, 48 têtes Q et 12 têtes K/V), arrêter le serveur puis lancer :
+(5080 tokens : 4056 image + 1024 texte, 48 têtes Q et 12 têtes K/V), arrêter le serveur puis lancer :
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\benchmark_krea2_cuda.py --attention
@@ -759,6 +759,13 @@ disparaissent. Entrez le prompt puis générez : valeurs initiales 1248 × 832,
 mémorisés séparément. Krea reste accessible même si aucun checkpoint SDXL n'est
 installé. L'aperçu n'est pas sauvegardé automatiquement ; le bouton de
 téléchargement reste disponible.
+
+Krea utilise une fenêtre de **1024 tokens** (environ 1019 pour le texte et 5 pour
+le suffixe), avec une limite de **8000 caractères** dans l'API et le frontend.
+Les tokens au-delà de 512 participent à la génération ; le dépassement de la
+fenêtre de 1024 reste tronqué automatiquement. Cette extension augmente le coût
+de calcul et de mémoire ; sa qualité avec les poids réels reste à vérifier sur
+le GPU. SDXL conserve ses propres limites.
 
 L'API renvoie le PNG directement en mémoire, sans écrire dans `outputs/` ni créer
 de JSON/cache d'identité. **rp-bot conserve les images reçues**, comme avec SDXL.

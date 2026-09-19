@@ -37,6 +37,7 @@ const elements = {
   character: document.querySelector("#character"),
   prompt: document.querySelector("#prompt"),
   promptCount: document.querySelector("#promptCount"),
+  promptLimit: document.querySelector("#promptLimit"),
   negativeMode: document.querySelector("#negativeMode"),
   negativePrompt: document.querySelector("#negativePrompt"),
   negativePromptField: document.querySelector("#negativePromptField"),
@@ -264,6 +265,7 @@ function engineValues() {
 
 function updateEngineFields() {
   const krea = state.engine === "krea2";
+  updatePromptValidation();
   for (const [selector, hidden] of [["[data-sdxl-only]", krea], ["[data-krea2-only]", !krea]]) {
     document.querySelectorAll(selector).forEach((group) => {
       group.hidden = hidden;
@@ -475,6 +477,15 @@ function validateSeed() {
   elements.seed.setCustomValidity(message);
 }
 
+function updatePromptValidation() {
+  const limit = state.engine === "krea2" ? 8000 : 4000;
+  elements.prompt.maxLength = limit;
+  elements.promptLimit.textContent = String(limit);
+  elements.prompt.setCustomValidity(elements.prompt.value.length > limit
+    ? `Le prompt dépasse ${limit} caractères pour ce moteur.` : "");
+  updateCount(elements.prompt, elements.promptCount);
+}
+
 function buildGenerationBody() {
   const form = new FormData();
   if (state.engine === "krea2") {
@@ -597,6 +608,7 @@ async function generate(event) {
   setError();
   if (state.engine === "sdxl") validateReference();
   validateSeed();
+  updatePromptValidation();
 
   if (!elements.form.checkValidity()) {
     elements.form.reportValidity();
@@ -692,7 +704,7 @@ elements.imageLightbox.addEventListener("close", () => {
   elements.lightboxImage.removeAttribute("src");
 });
 elements.seed.addEventListener("input", validateSeed);
-elements.prompt.addEventListener("input", () => updateCount(elements.prompt, elements.promptCount));
+elements.prompt.addEventListener("input", updatePromptValidation);
 elements.negativePrompt.addEventListener("input", () =>
   updateCount(elements.negativePrompt, elements.negativeCount),
 );
