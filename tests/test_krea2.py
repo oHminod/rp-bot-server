@@ -19,7 +19,7 @@ from pulid_app.models.krea2 import (
 from pulid_app.paths import configure_external_model_caches
 from pulid_app.pipeline.krea2 import Krea2Generator, Krea2Parameters, beta_sigmas, shifted_sigma
 from pulid_app.server import create_app
-from test_server import _write_config, _request, FakeEmbeddingModel, FakeMemoryGenerator
+from test_server import _write_config, _request, _generate_request, _image_bytes, FakeEmbeddingModel, FakeMemoryGenerator
 
 
 class FakeKreaGenerator:
@@ -31,6 +31,7 @@ class FakeKreaGenerator:
         self.options = options
         self.parameters = None
         self.closed = False
+        self.close_calls = 0
         self.instances.append(self)
 
     def generate(self, parameters):
@@ -40,6 +41,7 @@ class FakeKreaGenerator:
         return Image.new("RGB", (parameters.width, parameters.height), "navy"), {}
 
     def close(self):
+        self.close_calls += 1
         self.closed = True
 
 
@@ -55,6 +57,138 @@ def app(tmp_path):
                       embedding_model_factory=FakeEmbeddingModel,
                       krea2_generator_factory=FakeKreaGenerator,
                       cors_origins=["http://rp-bot.local"])
+
+
+@pytest.fixture
+def cuda_app(app):
+    return create_app(app.state.krea2_service.config.source_path, device="cuda",
+        generator_factory=FakeMemoryGenerator, embedding_model_factory=FakeEmbeddingModel,
+        krea2_generator_factory=FakeKreaGenerator)
+
+
+@pytest.mark.parametrize("override,expected", [(None, "none"), ("model_cpu_offload", "model_cpu_offload")])
+def test_krea_offload_override_is_independent_from_sdxl(app, override, expected):
+    application = create_app(app.state.krea2_service.config.source_path, device="cuda",
+        offload_strategy="none", krea2_offload_strategy=override,
+        generator_factory=FakeMemoryGenerator, embedding_model_factory=FakeEmbeddingModel,
+        krea2_generator_factory=FakeKreaGenerator)
+    assert application.state.generation_service.offload_strategy == "none"
+    assert _request(application, "POST", "/generate/krea2", data={"prompt": "photo"}).status_code == 200
+    assert FakeKreaGenerator.instances[-1].options["offload_strategy"] == expected
+
+
+def test_cuda_krea_reuses_pipeline_and_keeps_png_in_memory(cuda_app, tmp_path):
+    before = sorted(tmp_path.rglob("*"))
+    assert _request(cuda_app, "POST", "/generate/krea2", data={"prompt": "photo", "seed": 42}).status_code == 200
+    generator = FakeKreaGenerator.instances[0]
+    assert not generator.closed and generator.options["keep_loaded"]
+    assert _request(cuda_app, "GET", "/models").status_code == 200
+    assert _request(cuda_app, "POST", "/generate/krea2", data={"prompt": "", "steps": 0}).status_code == 422
+    response = _request(cuda_app, "POST", "/generate/krea2",
+        data={"prompt": "autre photo", "seed": 43, "width": 64, "height": 80})
+    assert response.status_code == 200 and response.headers["x-generation-seed"] == "43"
+    assert Image.open(BytesIO(response.content)).size == (64, 80)
+    assert len(FakeKreaGenerator.instances) == 1 and not generator.closed
+    assert generator.parameters.prompt == "autre photo"
+    assert sorted(tmp_path.rglob("*")) == before
+    cuda_app.state.krea2_service.close()
+    cuda_app.state.krea2_service.close()
+    assert generator.close_calls == 1
+
+
+def test_cuda_krea_failure_evicts_pipeline_and_allows_retry(cuda_app):
+    assert _request(cuda_app, "POST", "/generate/krea2", data={"prompt": "photo"}).status_code == 200
+    generator = FakeKreaGenerator.instances[0]
+    generator.failure = GenerationError("CUDA OOM")
+    response = _request(cuda_app, "POST", "/generate/krea2", data={"prompt": "photo"})
+    assert response.status_code == 500
+    assert response.json()["detail"]["message"] == "CUDA OOM"
+    assert generator.close_calls == 1
+    assert _request(cuda_app, "POST", "/generate/krea2", data={"prompt": "photo"}).status_code == 200
+    assert len(FakeKreaGenerator.instances) == 2
+    assert not FakeKreaGenerator.instances[-1].closed
+
+
+def test_cuda_krea_closed_on_server_shutdown(cuda_app):
+    import asyncio
+    import httpx
+    async def run():
+        async with cuda_app.router.lifespan_context(cuda_app):
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=cuda_app), base_url="http://testserver") as client:
+                assert (await client.post("/generate/krea2", data={"prompt": "photo"})).status_code == 200
+            assert not FakeKreaGenerator.instances[0].closed
+        assert FakeKreaGenerator.instances[0].close_calls == 1
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("consumer", ["sdxl", "bge_gpu", "bge_cpu"])
+def test_krea_is_evicted_before_another_gpu_model_loads(app, consumer):
+    class CheckedSDXL(FakeMemoryGenerator):
+        def __init__(self, *args, **kwargs):
+            assert FakeKreaGenerator.instances[-1].closed
+            super().__init__(*args, **kwargs)
+    class CheckedEmbedding(FakeEmbeddingModel):
+        def __init__(self, *args, **kwargs):
+            assert FakeKreaGenerator.instances[-1].closed == (consumer != "bge_cpu")
+            super().__init__(*args, **kwargs)
+    application = create_app(app.state.krea2_service.config.source_path, device="cuda",
+        embedding_memory_mode="cpu" if consumer == "bge_cpu" else "concurrent",
+        generator_factory=CheckedSDXL, embedding_model_factory=CheckedEmbedding,
+        krea2_generator_factory=FakeKreaGenerator)
+    assert _request(application, "POST", "/generate/krea2", data={"prompt": "photo"}).status_code == 200
+    if consumer == "sdxl":
+        response = _generate_request(application)
+        other = FakeMemoryGenerator.instances[-1]
+    else:
+        response = _request(application, "POST", "/v1/embeddings",
+            json={"model": "text-embedding-bge-m3", "input": "bonjour"})
+        other = FakeEmbeddingModel.instances[-1]
+    assert response.status_code == 200, response.text
+    assert FakeKreaGenerator.instances[0].closed == (consumer != "bge_cpu")
+    assert _request(application, "POST", "/generate/krea2", data={"prompt": "retour à Krea"}).status_code == 200
+    assert other.closed
+    assert len(FakeKreaGenerator.instances) == (1 if consumer == "bge_cpu" else 2)
+
+
+def test_simultaneous_sdxl_and_bge_wait_for_krea_eviction(app):
+    import asyncio
+    import threading
+    import httpx
+    entered, release = threading.Event(), threading.Event()
+    class SlowCloseKrea(FakeKreaGenerator):
+        def close(self):
+            entered.set()
+            assert release.wait(5)
+            super().close()
+    class CheckedSDXL(FakeMemoryGenerator):
+        def __init__(self, *args, **kwargs):
+            assert FakeKreaGenerator.instances[0].closed
+            super().__init__(*args, **kwargs)
+    class CheckedEmbedding(FakeEmbeddingModel):
+        def __init__(self, *args, **kwargs):
+            assert FakeKreaGenerator.instances[0].closed
+            super().__init__(*args, **kwargs)
+    application = create_app(app.state.krea2_service.config.source_path, device="cuda",
+        generator_factory=CheckedSDXL, embedding_model_factory=CheckedEmbedding,
+        krea2_generator_factory=SlowCloseKrea)
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=application), base_url="http://testserver") as client:
+            assert (await client.post("/generate/krea2", data={"prompt": "photo"})).status_code == 200
+            sdxl = asyncio.create_task(client.post("/generate",
+                files={"reference": ("face.png", _image_bytes(), "image/png")},
+                data={"character": "test", "prompt": "photo", "model": "realvisxl"}))
+            assert await asyncio.to_thread(entered.wait, 5)
+            bge = asyncio.create_task(client.post("/v1/embeddings",
+                json={"model": "text-embedding-bge-m3", "input": "bonjour"}))
+            try:
+                await asyncio.sleep(.05)
+                assert not sdxl.done() and not bge.done()
+                assert not FakeMemoryGenerator.instances and not FakeEmbeddingModel.instances
+            finally:
+                release.set()
+            assert all(response.status_code == 200 for response in await asyncio.gather(sdxl, bge))
+            assert FakeKreaGenerator.instances[0].close_calls == 1
+    asyncio.run(run())
 
 
 def test_http_defaults_png_no_identity_and_no_disk_writes(app, tmp_path):
@@ -191,7 +325,8 @@ def test_generator_maps_cfg_and_scales_partial_noise(tmp_path, monkeypatch):
         def __call__(self, **kwargs):
             calls.append(kwargs)
             return SimpleNamespace(images=[Image.new("RGB", (64, 64))])
-        def to(self, device):
+        def to(self, device, **kwargs):
+            assert device == "cpu" and kwargs == {"silence_dtype_warnings": True}
             return self
     monkeypatch.setattr("pulid_app.pipeline.krea2.load_krea2_pipeline", lambda *a, **kw: Pipeline())
     generator = Krea2Generator(config)
@@ -293,10 +428,13 @@ def test_krea_waits_for_bge_even_in_concurrent_cuda_mode(tmp_path):
 
 @pytest.mark.parametrize("cfg", [0, .5, 1, 2])
 @pytest.mark.parametrize("dtype_name", ["float32", "float16"])
-def test_real_diffusers_components_generate_with_tiny_random_weights(tmp_path, cfg, dtype_name):
+@pytest.mark.parametrize("retain_device", [None, "cpu", pytest.param("cuda", marks=pytest.mark.gpu)])
+def test_real_diffusers_components_generate_with_tiny_random_weights(tmp_path, monkeypatch, cfg, dtype_name, retain_device):
     """Exerce réellement le débruitage et le VAE, sans poids téléchargés."""
     configure_external_model_caches(tmp_path)
     import torch
+    if retain_device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA requis pour vérifier la résidence du pipeline entre deux images")
     from diffusers import AutoencoderKLQwenImage, FlowMatchEulerDiscreteScheduler, Krea2Transformer2DModel
     from transformers import Qwen3VLTextConfig, Qwen3VLTextModel
     from pulid_app.models.krea2 import workflow_pipeline
@@ -320,13 +458,39 @@ def test_real_diffusers_components_generate_with_tiny_random_weights(tmp_path, c
         vae=vae, scheduler=FlowMatchEulerDiscreteScheduler(use_dynamic_shifting=True),
         is_distilled=True, text_encoder_select_layers=(1, 2))
     pipe.set_progress_bar_config(disable=True)
+    resets = []
+    if retain_device:
+        # CPU exerce les vrais hooks Accelerate en CI, CUDA vérifie en plus
+        # la résidence effective du VAE et son éviction avant le prochain Qwen.
+        pipe.enable_model_cpu_offload(device=retain_device)
+        pipe.retain_model_hooks = True
+        hooks = tuple(pipe._all_hooks)
+        def unexpected_reset(*args, **kwargs):
+            pytest.fail("L'offload ne doit pas être réinstallé après chaque image")
+        monkeypatch.setattr(pipe, "enable_model_cpu_offload", unexpected_reset)
+        monkeypatch.setattr(transformer, "_reset_stateful_cache", lambda: resets.append(True), raising=False)
     embeds = torch.randn(1, 4, 2, 16, dtype=dtype)
     mask = torch.ones(1, 4, dtype=torch.bool)
-    with torch.inference_mode():
-        result = pipe(prompt_embeds=embeds, prompt_embeds_mask=mask,
-            negative_prompt_embeds=torch.zeros_like(embeds), negative_prompt_embeds_mask=mask,
-            width=64, height=64, num_inference_steps=2, sigmas=beta_sigmas(2, 1), guidance_scale=cfg-1,
-            generator=torch.Generator().manual_seed(42), output_type="np")
-    assert result.images.shape == (1, 64, 64, 3)
-    assert torch.isfinite(torch.from_numpy(result.images)).all()
-    assert pipe.do_classifier_free_guidance == (cfg != 1)
+    try:
+        with torch.inference_mode():
+            for iteration in range(2 if retain_device else 1):
+                if iteration:
+                    pipe.prepare_for_next_generation()
+                    assert all(p.device.type == "cpu" for p in vae.parameters())
+                result = pipe(prompt_embeds=embeds, prompt_embeds_mask=mask,
+                    negative_prompt_embeds=torch.zeros_like(embeds), negative_prompt_embeds_mask=mask,
+                    width=64, height=64, num_inference_steps=2, sigmas=beta_sigmas(2, 1), guidance_scale=cfg-1,
+                    generator=torch.Generator().manual_seed(42), output_type="np")
+                assert result.images.shape == (1, 64, 64, 3)
+                assert torch.isfinite(torch.from_numpy(result.images)).all()
+                assert pipe.do_classifier_free_guidance == (cfg != 1)
+                if retain_device:
+                    assert tuple(pipe._all_hooks) == hooks
+                    assert len(resets) == iteration + 1
+                    assert next(vae.parameters()).device.type == retain_device
+                    if iteration:
+                        torch.testing.assert_close(torch.from_numpy(result.images), first)
+                    first = torch.from_numpy(result.images).clone()
+    finally:
+        pipe.remove_all_hooks()
+        pipe.to("cpu", silence_dtype_warnings=True)

@@ -59,3 +59,20 @@ def test_windows_defaults_to_loopback_with_explicit_advanced_network_mode() -> N
     assert "shift" not in launcher
     assert 'if "%PULID_CONFIGURE_NETWORK%"=="1" goto :ask_firewall' in installer
     assert "Mode reseau avance : relancez install_windows.bat --network." in installer
+
+
+def test_windows_defaults_to_krea_offload_without_changing_sdxl() -> None:
+    import shlex
+    from pulid_app.server import build_parser
+
+    command = next(line for line in _read("start_windows.bat").splitlines()
+                   if "-m pulid_app.server " in line)
+    flags = command.split("-m pulid_app.server ", 1)[1]
+    flags = flags.replace("%SERVER_HOST%", "127.0.0.1").replace("%SERVER_CORS%", "")
+    assert flags.endswith("%*")
+    parser = build_parser()
+    defaults = parser.parse_args(shlex.split(flags.replace("%*", "")))
+    assert defaults.krea2_offload == "model_cpu_offload"
+    assert defaults.offload == "none"
+    overridden = parser.parse_args(shlex.split(flags.replace("%*", "--krea2-offload none --CPU")))
+    assert overridden.krea2_offload == "none" and overridden.embedding_memory_mode == "cpu"

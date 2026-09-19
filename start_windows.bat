@@ -43,5 +43,5 @@ echo.
 echo Arret du serveur : Ctrl+C
 echo.
 
-"%SERVER_PYTHON%" -I -m pulid_app.server --host %SERVER_HOST% --port 12693 --device cuda --dtype float16 --offload none %SERVER_CORS% %*
+"%SERVER_PYTHON%" -I -m pulid_app.server --host %SERVER_HOST% --port 12693 --device cuda --dtype float16 --offload none --krea2-offload model_cpu_offload %SERVER_CORS% %*
 exit /b %ERRORLEVEL%

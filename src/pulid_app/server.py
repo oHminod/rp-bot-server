@@ -113,22 +113,41 @@ class Krea2GenerationService:
                  now_factory: Callable[[], datetime] | None, random_seed: Callable[[], int] | None) -> None:
         self.config = config
         self.generator_factory = generator_factory
-        self.options = dict(device=device, dtype_name=dtype_name, offload_strategy=offload_strategy)
+        self.keep_loaded = (device or config.device.preferred).strip().lower().split(":")[0] == "cuda"
+        self.options = dict(device=device, dtype_name=dtype_name, offload_strategy=offload_strategy,
+                            keep_loaded=self.keep_loaded)
         self.now_factory = now_factory or (lambda: datetime.now(timezone.utc))
         self.random_seed = random_seed
+        self._generator: Any | None = None
+
+    def close(self) -> None:
+        """Libère Krea lors d'un changement de moteur, d'une erreur ou de l'arrêt."""
+        generator, self._generator = self._generator, None
+        if generator is not None:
+            generator.close()
 
     def generate(self, parameters: Krea2Parameters) -> GeneratedPayload:
         parameters = replace(parameters, seed=resolve_generation_seed(parameters.seed, self.random_seed))
-        generator = self.generator_factory(self.config, **self.options)
+        if self._generator is None:
+            self._generator = self.generator_factory(self.config, **self.options)
+        generator = self._generator
+        succeeded = False
         try:
             image, _metadata = generator.generate(parameters)
             filename = generated_filename("krea2", self.now_factory())
             output = BytesIO()
             image.save(output, format="PNG")
             content = output.getvalue()
+            succeeded = True
             return GeneratedPayload(content, filename, parameters.seed, "krea2", parameters.sampler, parameters.scheduler)
         finally:
-            generator.close()
+            if not self.keep_loaded or not succeeded:
+                try:
+                    self.close()
+                except Exception:
+                    if succeeded:
+                        raise
+                    LOGGER.exception("Échec du nettoyage Krea après une erreur de génération.")
 
 
 def list_sdxl_models(config: AppConfig) -> list[dict[str, Any]]:
@@ -577,6 +596,7 @@ def create_app(
     device: str | None = None,
     dtype_name: str | None = None,
     offload_strategy: str | None = None,
+    krea2_offload_strategy: str | None = None,
     generator_factory: Callable[..., Any] = ImageGenerator,
     krea2_generator_factory: Callable[..., Any] = Krea2Generator,
     embedding_model_factory: Callable[..., Any] = load_llama_cpp_embedding_model,
@@ -615,7 +635,9 @@ def create_app(
     )
     krea2_service = Krea2GenerationService(
         config, generator_factory=krea2_generator_factory, device=device,
-        dtype_name=dtype_name, offload_strategy=offload_strategy,
+        dtype_name=dtype_name, offload_strategy=(
+            krea2_offload_strategy if krea2_offload_strategy is not None else offload_strategy
+        ),
         now_factory=now_factory, random_seed=random_seed,
     )
 
@@ -624,11 +646,17 @@ def create_app(
             embedding_service.close()
             service.restore_after_embedding(normalized_embedding_mode)
 
-    def close_services() -> None:
+    def close_sdxl_and_embeddings() -> None:
         try:
             service.close()
         finally:
             embedding_service.close()
+
+    def close_services() -> None:
+        try:
+            close_sdxl_and_embeddings()
+        finally:
+            krea2_service.close()
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -674,6 +702,12 @@ def create_app(
     generation_lock = asyncio.Lock()
     embedding_lock = asyncio.Lock()
     accelerator_lock = asyncio.Lock()
+
+    async def release_krea_for_other_model() -> None:
+        # SDXL et BGE peuvent arriver ensemble en mode concurrent. Attendre la
+        # fin du déchargement avant que l'un ou l'autre n'alloue son modèle.
+        async with accelerator_lock:
+            await run_in_threadpool(krea2_service.close)
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -730,6 +764,7 @@ def create_app(
         try:
             async with embedding_lock:
                 if embedding_service.uses_accelerator:
+                    await release_krea_for_other_model()
                     async with (
                         nullcontext() if concurrent_cuda else accelerator_lock
                     ):
@@ -790,6 +825,7 @@ def create_app(
     ) -> Response:
         try:
             async with generation_lock:
+                await release_krea_for_other_model()
                 generation_kwargs = {
                     "reference_content": reference,
                     "character": character,
@@ -843,7 +879,7 @@ def create_app(
             # Ces verrous couvrent aussi le mode CUDA concurrent : Krea ne peut
             # pas décharger BGE/SDXL pendant qu'une requête les utilise.
             async with generation_lock, embedding_lock, accelerator_lock:
-                await run_in_threadpool(close_services)
+                await run_in_threadpool(close_sdxl_and_embeddings)
                 payload = await run_in_threadpool(krea2_service.generate, parameters)
         except (PuLIDAppError, OSError, RuntimeError, ValueError) as exc:
             raise _http_error(exc) from exc
@@ -878,6 +914,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--offload",
         choices=("none", "model_cpu_offload"),
+    )
+    parser.add_argument(
+        "--krea2-offload",
+        choices=("none", "model_cpu_offload"),
+        help="Offload Krea uniquement ; hérite de --offload ou de la configuration si omis.",
     )
     embedding_group = parser.add_mutually_exclusive_group()
     embedding_group.add_argument(
@@ -951,6 +992,7 @@ def main(argv: list[str] | None = None) -> int:
             device=args.device,
             dtype_name=args.dtype,
             offload_strategy=args.offload,
+            krea2_offload_strategy=args.krea2_offload,
             embedding_memory_mode=args.embedding_memory_mode,
             cors_origins=cors_origins,
         ),

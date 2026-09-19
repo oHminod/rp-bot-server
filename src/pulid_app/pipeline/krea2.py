@@ -128,11 +128,13 @@ def generation_progress(pipeline: Any, torch: Any, device: str, steps: int):
 
 
 class Krea2Generator:
-    def __init__(self, config: AppConfig, *, device: str | None = None, dtype_name: str | None = None, offload_strategy: str | None = None) -> None:
+    def __init__(self, config: AppConfig, *, device: str | None = None, dtype_name: str | None = None,
+                 offload_strategy: str | None = None, keep_loaded: bool = False) -> None:
         self.config = config
         self.device = (device or config.device.preferred).strip().lower()
         self.dtype_name = dtype_name or config.device.dtype
         self.offload = offload_strategy or config.device.offload_strategy
+        self.keep_loaded = keep_loaded
         self.pipeline: Any | None = None
         self.memory = MemoryManager(config.models_root, device=self.device)
         self._torch: Any | None = None
@@ -160,18 +162,23 @@ class Krea2Generator:
             raise UnsupportedDeviceError("model_cpu_offload Krea 2 exige CUDA ; utilisez --offload none sur MPS/CPU.")
         self.dtype = torch.float32 if kind == "cpu" else getattr(torch, self.dtype_name)
         self.pipeline = load_krea2_pipeline(self.config.krea2, device=self.device, dtype=self.dtype, offload=self.offload)
+        self.pipeline.retain_model_hooks = self.keep_loaded and kind == "cuda"
         return self.pipeline
 
     def generate(self, parameters: Krea2Parameters) -> tuple[Any, dict[str, Any]]:
         logger = logging.getLogger("uvicorn.error")
         started = perf_counter()
-        logger.info("Krea 2 : chargement sur %s (%s)...", self.device, self.offload)
+        reused = self.pipeline is not None
+        logger.info("Krea 2 : %s sur %s (%s)...",
+            "pipeline réutilisé" if reused else "chargement", self.device, self.offload)
         pipeline = self._load()
         logger.info("Krea 2 : composants prêts en %.2f s, calcul %s, image %dx%d.",
             perf_counter() - started, self.dtype, parameters.width, parameters.height)
         torch = self._torch
         sigmas = beta_sigmas(parameters.steps, parameters.denoise)
         try:
+            if reused and self.keep_loaded:
+                pipeline.prepare_for_next_generation()
             with torch.inference_mode(), generation_progress(pipeline, torch, self.device, len(sigmas)) as progress:
                 # Générateur CPU également sur MPS ; pas de seed globale partagée.
                 generator = torch.Generator(device="cpu").manual_seed(parameters.seed)
@@ -206,7 +213,7 @@ class Krea2Generator:
             if pipeline is not None:
                 if self.offload == "model_cpu_offload":
                     pipeline.remove_all_hooks()
-                pipeline.to("cpu")
+                pipeline.to("cpu", silence_dtype_warnings=True)
         finally:
             del pipeline
             if self._torch is not None:

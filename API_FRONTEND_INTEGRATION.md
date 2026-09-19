@@ -91,6 +91,11 @@ par défaut. Si elle provoque un OOM lors d'un pic mémoire,
 `--serialized-cuda` restaure le verrou commun sans offload.
 `start_pulid_server.sh` et `start_windows.bat` transmettent leurs arguments au
 serveur.
+Le script Windows ajoute `--krea2-offload model_cpu_offload` par défaut, adapté
+aux cartes de 12 Go. Cette option est indépendante de la politique SDXL/BGE
+ci-dessus. Pour Krea entièrement en VRAM, utiliser `start_windows.bat
+--krea2-offload none`. Hors du script Windows, si cette option est omise,
+Krea hérite de `--offload` ou de la configuration.
 
 URL de base utilisée dans les exemples :
 
@@ -796,15 +801,27 @@ son nom (Flash, memory-efficient ou cuDNN). Aucun repli silencieux vers
 le backend `math` n'est permis. Si aucun noyau n'est compatible, l'API renvoie
 `500` avec `detail.error = "GenerationError"` et un message indiquant les
 dimensions et la commande `scripts/benchmark_krea2_cuda.py --attention`.
-Pour une carte de 12 Go, lancer `start_windows.bat --offload model_cpu_offload`.
+Pour une carte de 12 Go, lancer simplement `start_windows.bat` : l'offload Krea
+par composant est déjà sélectionné par le script.
 Le serveur, y compris l'exécutable direct `pulid-server`, écoute désormais sur
 `127.0.0.1:12693` par défaut, comme le proxy du frontend. Un port différent exige
 de régler aussi l'URL du backend du frontend.
 
 Krea est sérialisé avec toutes les générations SDXL et tous les embeddings BGE,
 y compris en mode CUDA concurrent. Après les requêtes en cours, SDXL et BGE sont
-déchargés avant Krea. Krea est libéré à la fin de chaque requête, succès ou erreur.
-Les routes SDXL/BGE rechargent ensuite leurs composants à la demande.
+déchargés avant Krea. Sur CUDA, le pipeline Krea est conservé après succès et
+réutilisé pour les requêtes suivantes, y compris lorsque les paramètres changent.
+En offload par composant, les poids restent en RAM et le dernier composant actif
+(VAE) reste en VRAM entre les requêtes. Le cache CUDA n'est pas vidé après chaque
+image ; le VAE est offloadé au début de la requête suivante, avant Qwen.
+Cela n'implique pas de conserver Qwen, Krea et le VAE simultanément en VRAM.
+
+Krea est libéré avant le chargement d'un modèle SDXL ou BGE sur GPU, après une
+erreur et à l'arrêt du serveur. L'éviction est sérialisée même si SDXL et BGE
+arrivent simultanément. Un embedding BGE sur CPU et les routes de découverte
+ne déchargent pas Krea. CPU/MPS continuent à libérer Krea après chaque requête.
+Les routes SDXL/BGE rechargent leurs composants à la demande ; aucun changement
+du PNG en mémoire, des paramètres ou des en-têtes HTTP.
 
 ```bash
 curl --fail-with-body http://127.0.0.1:12693/generate/krea2 \

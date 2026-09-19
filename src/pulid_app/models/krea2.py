@@ -189,6 +189,25 @@ def workflow_pipeline(**components: Any) -> Any:
     from diffusers import Krea2Pipeline
 
     class WorkflowKrea2Pipeline(Krea2Pipeline):
+        retain_model_hooks: bool = False
+
+        def prepare_for_next_generation(self) -> None:
+            # La chaîne Accelerate n'est pas circulaire : libérer le dernier
+            # composant (VAE) avant que Qwen ne revienne sur le GPU.
+            if self.retain_model_hooks:
+                for hook in getattr(self, "_all_hooks", ()):
+                    hook.offload()
+
+        def maybe_free_model_hooks(self) -> None:
+            if not self.retain_model_hooks:
+                return super().maybe_free_model_hooks()
+            # Garder les hooks et le dernier composant GPU entre requêtes,
+            # sans réinstaller l'offload ni vider l'allocateur CUDA. Les caches
+            # de calcul doivent toutefois être réinitialisés pour chaque image.
+            for component in self.components.values():
+                if hasattr(component, "_reset_stateful_cache"):
+                    component._reset_stateful_cache()
+
         @property
         def do_classifier_free_guidance(self) -> bool:
             # Diffusers utilise cond + guidance*(cond-uncond), donc cfg-1.

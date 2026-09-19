@@ -272,6 +272,10 @@ start_windows.bat
 
 Le serveur écoute par défaut sur `127.0.0.1:12693`, y compris sous Windows. Il
 n’est donc accessible que depuis la machine locale.
+Le script Windows active automatiquement `model_cpu_offload` pour Krea v2,
+adapté aux cartes de 12 Go. Aucun argument supplémentaire n'est nécessaire.
+`--krea2-offload none` permet de le désactiver explicitement ; les réglages
+SDXL/BGE restent indépendants.
 
 Pour un réseau privé de confiance uniquement, après configuration explicite du
 pare-feu, le mode avancé Windows écoute sur `0.0.0.0` et active CORS ouvert :
@@ -674,10 +678,11 @@ SDPA précédents sont restaurés après chaque appel ; CPU et MPS gardent leur 
 
 Après une mise à jour du code, lancer `install_windows.bat --update` pour installer
 les dépendances verrouillées, dont Comfy Kitchen. Cela ne télécharge pas les
-poids Krea ni Qwen3-VL. Puis, pour une carte CUDA de 12 Go :
+poids Krea ni Qwen3-VL. Le lancement Windows sélectionne déjà l'offload Krea
+par composant, adapté à une carte CUDA de 12 Go :
 
 ```powershell
-.\start_windows.bat --offload model_cpu_offload
+.\start_windows.bat
 ```
 
 Le script prépare les bibliothèques CUDA et écoute sur `127.0.0.1:12693`,
@@ -688,9 +693,26 @@ Ce mode charge successivement Qwen, Krea puis le VAE. Si un composant compacté
 et la marge de calcul estimée dépassent la VRAM libre, Krea utilise l'offload
 par sous-module d'Accelerate. Les transferts des couches quantifiées restent
 compactés. La marge est une estimation, pas une garantie pour toutes les
-résolutions ; réduire la résolution si la mémoire manque. `--offload none`
-conserve tous les composants sur le device. MPS et CPU utilisent ce dernier
-mode, avec déquantification temporaire par couche (CPU en float32).
+résolutions ; réduire la résolution si la mémoire manque. `--krea2-offload none`
+conserve tous les composants Krea sur le device. L'option `--krea2-offload`
+s'applique uniquement à Krea ; si elle est omise, Krea hérite de `--offload`
+ou de la configuration. MPS et CPU utilisent `none`, avec déquantification
+temporaire par couche (CPU en float32).
+
+Sur CUDA, le serveur conserve le pipeline après une génération réussie et le
+réutilise pour les requêtes Krea suivantes, même si le prompt, la seed ou la
+résolution changent. Il ne relit pas les poids et ne vide pas systématiquement
+le cache CUDA. Avec l'offload par composant, le dernier composant actif (le VAE)
+reste en VRAM entre les requêtes ; Qwen et le modèle de diffusion restent en RAM.
+Le VAE est déplacé sur CPU au début de la requête suivante, avant l'encodage Qwen.
+Les transferts entre composants pendant la génération restent nécessaires sur
+12 Go : tous les poids ne sont pas conservés simultanément en VRAM.
+
+Krea est libéré avant une génération SDXL ou un embedding BGE sur GPU, après
+une erreur, et à l'arrêt du serveur. Un embedding BGE sur CPU ou une requête
+de découverte (`/health`, `/models`, `/capabilities`) ne l'évince pas.
+CPU/MPS gardent le nettoyage après chaque requête. Les images restent uniquement
+dans la réponse HTTP en mémoire.
 
 Le terminal distingue le chargement, l'encodage Qwen, chaque step de diffusion
 et le décodage VAE, avec leurs durées. Si le premier step semble bloqué,
