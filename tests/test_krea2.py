@@ -11,7 +11,7 @@ import pytest
 import yaml
 
 from pulid_app.config import ConfigError, load_config
-from pulid_app.exceptions import ModelLoadError, ModelNotFoundError
+from pulid_app.exceptions import GenerationError, ModelLoadError, ModelNotFoundError
 from pulid_app.models.krea2 import (
     inspect_weight_format, load_safetensors_module, text_encoder_key,
     transformer_key, validate_krea2_assets,
@@ -98,13 +98,19 @@ def test_http_validation_happens_before_model_allocation(app, invalid):
     assert not FakeKreaGenerator.instances
 
 
-@pytest.mark.parametrize("error,status", [(ModelNotFoundError("Absent : /models/krea2.safetensors"), 422), (ModelLoadError("Poids invalides : /models/krea2.safetensors"), 500), (RuntimeError("OOM"), 500)])
+@pytest.mark.parametrize("error,status", [
+    (ModelNotFoundError("Absent : /models/krea2.safetensors"), 422),
+    (ModelLoadError("Poids invalides : /models/krea2.safetensors"), 500),
+    (RuntimeError("OOM"), 500),
+    (GenerationError("Attention Krea CUDA fusionnée indisponible ; scripts/benchmark_krea2_cuda.py --attention"), 500),
+])
 def test_http_errors_cleanup_and_recovery(app, error, status):
     FakeKreaGenerator.failure = error
     try:
         response = _request(app, "POST", "/generate/krea2", data={"prompt": "photo"})
         assert response.status_code == status
         assert response.json()["detail"]["message"] == str(error)
+        assert response.json()["detail"]["error"] == type(error).__name__
         assert FakeKreaGenerator.instances[-1].closed
     finally:
         FakeKreaGenerator.failure = None

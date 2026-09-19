@@ -240,7 +240,7 @@ def load_krea2_pipeline(config: Krea2Config, *, device: str, dtype: Any, offload
         configure_cuda_kernels((transformer, text_encoder), device)
         configure_krea2_attention(transformer, device)
         if device.split(":")[0] == "cuda":
-            logging.getLogger("uvicorn.error").info("Krea 2 : noyaux CUDA configurés ; attention SDPA avec adaptation du GQA masqué.")
+            logging.getLogger("uvicorn.error").info("Krea 2 : noyaux CUDA configurés ; attention SDPA fusionnée obligatoire.")
 
         pipeline = workflow_pipeline(
             transformer=transformer, text_encoder=text_encoder, tokenizer=tokenizer,

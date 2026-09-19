@@ -791,6 +791,11 @@ installation existante par `install_windows.bat --update`, sans recréer `.venv`
 Une dépendance absente/inutilisable produit également
 une erreur de chargement `500` avec la commande corrective. Le terminal trace
 les phases et les durées ; la réponse HTTP reste un PNG unique à la fin.
+L'attention du modèle Krea sur CUDA impose un noyau fusionné et journalise
+son nom (Flash, memory-efficient ou cuDNN). Aucun repli silencieux vers
+le backend `math` n'est permis. Si aucun noyau n'est compatible, l'API renvoie
+`500` avec `detail.error = "GenerationError"` et un message indiquant les
+dimensions et la commande `scripts/benchmark_krea2_cuda.py --attention`.
 Pour une carte de 12 Go, lancer `start_windows.bat --offload model_cpu_offload`.
 Le serveur, y compris l'exécutable direct `pulid-server`, écoute désormais sur
 `127.0.0.1:12693` par défaut, comme le proxy du frontend. Un port différent exige

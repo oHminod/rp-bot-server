@@ -662,8 +662,15 @@ en importer le runtime. Sur CUDA, le décodage par couche utilise les noyaux
 précompilés **Comfy Kitchen 0.2.35**, également utilisés par ComfyUI. Un noyau
 absent produit une erreur explicite au chargement ; aucun repli vers la boucle
 PyTorch lente n'est effectué sur CUDA. Les multiplications NVFP4 natives de
-Blackwell ne sont pas utilisées. L'attention masquée adapte les têtes K/V
-pour éviter le repli GQA vers une matrice d'attention explicite coûteuse.
+Blackwell ne sont pas utilisées. L'attention Krea CUDA sélectionne explicitement
+un noyau fusionné (Flash, memory-efficient ou cuDNN) et journalise son nom.
+Les têtes K/V sont dépliées lorsque Flash ne prend pas en charge le GQA,
+notamment avec un masque. Le backend `math` est interdit pour ces appels :
+dans PyTorch 2.13 sur Ada, il est prioritaire sur cuDNN et peut matérialiser
+plusieurs Gio de matrices d'attention, même quand cuDNN est disponible.
+Si aucun noyau fusionné n'est utilisable, la génération échoue explicitement
+avec les dimensions concernées et la commande de diagnostic. Les réglages
+SDPA précédents sont restaurés après chaque appel ; CPU et MPS gardent leur chemin habituel.
 
 Après une mise à jour du code, lancer `install_windows.bat --update` pour installer
 les dépendances verrouillées, dont Comfy Kitchen. Cela ne télécharge pas les
@@ -701,6 +708,21 @@ complète et ne garantit pas une durée identique à ComfyUI :
 .\.venv\Scripts\python.exe scripts\benchmark_krea2_cuda.py
 ```
 
+Pour mesurer **l'attention seule** aux dimensions du workflow 1248×832
+(4568 tokens, 48 têtes Q et 12 têtes K/V), arrêter le serveur puis lancer :
+
+```powershell
+.\.venv\Scripts\python.exe scripts\benchmark_krea2_cuda.py --attention
+```
+
+Le JSON indique `attention_ms`, le pic de mémoire allouée par PyTorch et
+`sdpa_operators`, les opérateurs réellement exécutés, relevés par le profiler
+sans fichier de trace. On attend un opérateur `efficient_attention`,
+`flash_attention` ou `cudnn_attention`, jamais `attention_math`.
+Ce test ne charge aucun poids et n'est pas une mesure du step complet.
+Un correctif du code d'attention ne change pas les dépendances : dans une
+installation de développement, récupérer le code puis redémarrer suffit.
+
 Les quatre chemins sont centralisés dans la section `krea2` de
 `config/default.yaml` et `config/local.yaml`, relatifs à `models_root`.
 Ils peuvent être surchargés par `PULID_KREA2_CHECKPOINT`,
@@ -725,7 +747,9 @@ Références techniques : [Krea 2 officiel](https://github.com/krea-ai/krea-2),
 [pipeline Diffusers](https://github.com/huggingface/diffusers/blob/v0.39.0/src/diffusers/pipelines/krea2/pipeline_krea2.py),
 [scheduler beta de référence](https://github.com/Comfy-Org/ComfyUI/blob/master/comfy/samplers.py),
 [format NVFP4](https://github.com/Comfy-Org/comfy-quants/blob/main/docs/formats/nvfp4.md),
-[noyaux Comfy Kitchen](https://github.com/Comfy-Org/comfy-kitchen).
+[noyaux Comfy Kitchen](https://github.com/Comfy-Org/comfy-kitchen),
+[sélection SDPA PyTorch 2.13](https://github.com/pytorch/pytorch/blob/v2.13.0/aten/src/ATen/native/transformers/cuda/sdp_utils.cpp),
+[priorités SDPA par défaut](https://github.com/pytorch/pytorch/blob/v2.13.0/aten/src/ATen/Context.h).
 Les tests utilisent des composants factices et de petits composants Diffusers
 avec des poids synthétiques, y compris les formats quantifiés et l'offload.
 Pour vérifier les noyaux CUDA sur le PC, les tests ne téléchargent aucun modèle :

@@ -129,7 +129,7 @@ def test_expanded_gqa_attention_matches_diffusers_with_rotary(runtime, monkeypat
     assert heads == [(4, 4, 4, False)]
 
 
-@pytest.mark.parametrize("flash,cudnn,expected", [(False, False, True), (True, False, False), (False, True, False)])
+@pytest.mark.parametrize("flash,cudnn,expected", [(False, False, True), (True, False, False), (False, True, True)])
 def test_masked_gqa_dispatch_checks_fused_kernel_capabilities(runtime, monkeypatch, flash, cudnn, expected):
     torch = runtime
     from pulid_app.models.krea2_attention import needs_kv_expansion
@@ -142,10 +142,75 @@ def test_masked_gqa_dispatch_checks_fused_kernel_capabilities(runtime, monkeypat
     query = SimpleNamespace(device=torch.device("cuda"), shape=(1, 4, 7, 8))
     key = SimpleNamespace(shape=(1, 2, 7, 8))
     assert needs_kv_expansion(query, key, key, object()) == expected
-    assert not needs_kv_expansion(query, key, key, None)
+    # Même repli pour float32/GQA sans masque si Flash n'est pas éligible.
+    assert needs_kv_expansion(query, key, key, None) == expected
     assert not needs_kv_expansion(query, query, query, object())
     query.device = torch.device("cpu")
     assert not needs_kv_expansion(query, key, key, object())
+
+
+@pytest.mark.parametrize("available,expected", [
+    ((True, True, True), "FLASH_ATTENTION"),
+    ((False, True, True), "EFFICIENT_ATTENTION"),
+    ((False, False, True), "CUDNN_ATTENTION"),
+    ((False, False, False), None),
+])
+@pytest.mark.parametrize("fail", [False, True])
+def test_cuda_dispatch_excludes_math_and_restores_flags(runtime, monkeypatch, caplog, available, expected, fail):
+    torch = runtime
+    from torch.nn.attention import SDPBackend, sdpa_kernel
+    from pulid_app.exceptions import GenerationError
+    from pulid_app.models.krea2_attention import krea2_sdpa
+    cuda = torch.backends.cuda
+    monkeypatch.setattr(cuda, "SDPAParams", lambda *args: args)
+    for name, supported in zip(("flash", "efficient", "cudnn"), available):
+        monkeypatch.setattr(cuda, f"can_use_{name}_attention", lambda params, supported=supported: supported)
+    query = SimpleNamespace(device=torch.device("cuda"), dtype=torch.float16, shape=(1, 48, 4568, 128))
+    kv = SimpleNamespace(shape=(1, 12, 4568, 128))
+    expanded = []
+    def repeat(repeats, dim):
+        assert repeats == 4 and dim == 1
+        expanded.append(True)
+        return query
+    kv.repeat_interleave = repeat
+    mask = object()
+    calls = []
+    def run(q, k, v, **kwargs):
+        assert q is query and kwargs["attn_mask"] is mask
+        assert kwargs["enable_gqa"] == available[0]
+        assert k is v is (kv if available[0] else query)
+        assert not cuda.math_sdp_enabled()
+        assert cuda.flash_sdp_enabled() == (expected == "FLASH_ATTENTION")
+        assert cuda.mem_efficient_sdp_enabled() == (expected == "EFFICIENT_ATTENTION")
+        assert cuda.cudnn_sdp_enabled() == (expected == "CUDNN_ATTENTION")
+        calls.append(True)
+        if fail:
+            raise torch.OutOfMemoryError("test OOM")
+        return "result"
+    monkeypatch.setattr(torch.nn.functional, "scaled_dot_product_attention", run)
+    # Ordre Ada : math avant cuDNN. L'ancien chemin n'interdisait pas ce repli.
+    order = [SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION, SDPBackend.MATH,
+             SDPBackend.CUDNN_ATTENTION]
+    reported = set()
+    caplog.set_level(logging.INFO, logger="uvicorn.error")
+    with sdpa_kernel(order, set_priority=True):
+        priority = torch._C._get_sdp_priority_order()
+        if expected is None:
+            with pytest.raises(GenerationError, match="benchmark_krea2_cuda.py --attention"):
+                krea2_sdpa(query, kv, kv, mask, reported=reported)
+            assert not calls
+        elif fail:
+            with pytest.raises(torch.OutOfMemoryError, match="test OOM"):
+                krea2_sdpa(query, kv, kv, mask, reported=reported)
+        else:
+            for _ in range(2):
+                assert krea2_sdpa(query, kv, kv, mask, reported=reported) == "result"
+            assert caplog.text.count("Krea 2 : attention CUDA") == 1
+            assert expected in caplog.text
+        assert cuda.math_sdp_enabled() and cuda.flash_sdp_enabled()
+        assert cuda.mem_efficient_sdp_enabled() and cuda.cudnn_sdp_enabled()
+        assert torch._C._get_sdp_priority_order() == priority
+    assert bool(expanded) == (not available[0])
 
 
 @pytest.mark.parametrize("fail", [False, True])
@@ -173,17 +238,48 @@ def test_progress_logs_phases_and_removes_hooks_even_on_failure(runtime, caplog,
 
 
 @pytest.mark.gpu
-def test_real_cuda_masked_attention_without_math_backend(runtime):
+@pytest.mark.parametrize("mask_kind", ["padding", "additive", "none"])
+def test_real_cuda_attention_uses_fused_operator_with_math_enabled(runtime, mask_kind):
     torch = runtime
     if not torch.cuda.is_available():
         pytest.skip("CUDA requis pour vérifier l'attention fusionnée masquée")
     from torch.nn.attention import SDPBackend, sdpa_kernel
-    from diffusers.models.transformers.transformer_krea2 import Krea2Attention
-    from pulid_app.models.krea2_attention import configure_krea2_attention
-    attention = Krea2Attention(hidden_size=256, num_heads=4, num_kv_heads=2).to("cuda", dtype=torch.float16)
-    configure_krea2_attention(attention, "cuda")
-    hidden = torch.randn(1, 32, 256, device="cuda", dtype=torch.float16)
-    mask = torch.ones(1, 1, 32, 32, device="cuda", dtype=torch.bool).tril()
-    with torch.inference_mode(), sdpa_kernel([SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION, SDPBackend.CUDNN_ATTENTION]):
-        result = attention(hidden, attention_mask=mask)
-    assert result.shape == hidden.shape and torch.isfinite(result).all()
+    from pulid_app.models.krea2_attention import krea2_sdpa
+    query = torch.randn(1, 64, 48, 128, device="cuda", dtype=torch.float16).transpose(1, 2)
+    key, value = (torch.randn(1, 64, 12, 128, device="cuda", dtype=torch.float16).transpose(1, 2)
+                  for _ in range(2))
+    mask = torch.ones(1, 1, 1, 64, device="cuda", dtype=torch.bool)
+    mask[..., 32:48] = False
+    if mask_kind == "additive":
+        mask = torch.zeros_like(mask, dtype=query.dtype).masked_fill(~mask, float("-inf"))
+    elif mask_kind == "none":
+        mask = None
+    with torch.inference_mode():
+        with sdpa_kernel(SDPBackend.MATH):
+            expected = torch.nn.functional.scaled_dot_product_attention(query, key, value,
+                attn_mask=mask, enable_gqa=True)
+        # N'interdire PAS math dans le test : c'est le code applicatif qui doit
+        # garantir ce choix, même avec math placé avant tous les noyaux fusionnés.
+        with sdpa_kernel([SDPBackend.MATH, SDPBackend.FLASH_ATTENTION,
+                          SDPBackend.EFFICIENT_ATTENTION, SDPBackend.CUDNN_ATTENTION], set_priority=True):
+            with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU]) as profile:
+                result = krea2_sdpa(query, key, value, mask)
+                torch.cuda.synchronize()
+            assert torch.backends.cuda.math_sdp_enabled()
+    operators = {event.key for event in profile.key_averages()}
+    assert "aten::_scaled_dot_product_attention_math" not in operators
+    assert operators.intersection({"aten::_scaled_dot_product_efficient_attention",
+        "aten::_scaled_dot_product_flash_attention", "aten::_scaled_dot_product_cudnn_attention"})
+    torch.testing.assert_close(result, expected, rtol=3e-3, atol=3e-3)
+
+
+@pytest.mark.gpu
+def test_real_cuda_attention_benchmark_at_workflow_resolution(runtime):
+    torch = runtime
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA requis pour le benchmark 1248×832")
+    from scripts.benchmark_krea2_cuda import benchmark_attention
+    result = benchmark_attention(torch, torch.device("cuda:0"), 1)
+    assert result["query_shape"] == [1, 48, 4568, 128]
+    assert result["attention_ms"] > 0 and result["sdpa_operators"]
+    assert not any("math" in name for name in result["sdpa_operators"])
