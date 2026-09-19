@@ -871,7 +871,7 @@ def build_parser() -> argparse.ArgumentParser:
             "origins CORS. À réserver à un réseau privé de confiance."
         ),
     )
-    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--port", type=int, default=12693)
     parser.add_argument("--config", type=Path)
     parser.add_argument("--device", choices=("mps", "cuda", "cpu"))
     parser.add_argument("--dtype", choices=("float16", "float32"))

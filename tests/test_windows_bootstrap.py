@@ -77,12 +77,13 @@ def test_uv_bootstrap_checks_installed_binary_not_installer_exit_code(
     source = (ROOT / 'scripts/bootstrap_windows.ps1').read_text(encoding='utf-8')
     # Run the production selection/install/verification code unchanged. Only the
     # network endpoint and native uv program are replaced by local fixtures.
-    block = source[source.index("    $installed = ''"):source.index('    & $uv python install')]
+    block = source[source.index("    $installed = ''"):source.index('    if (-not $Update) {')]
     harness = tmp_path / 'verify-bootstrap.ps1'
     harness.write_text(
         "$ErrorActionPreference = 'Stop'\n"
         f'$uv = {_quote(uv)}\n'
         "$uvVersion = '0.12.10'\n"
+        '$Update = $false\n'
         f'$global:LASTEXITCODE = {previous_exit}\n'
         'function Invoke-RestMethod {\n'
         '    param([string]$Uri)\n'

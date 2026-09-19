@@ -159,6 +159,12 @@ def configure_krea2_memory(pipeline: Any, *, device: str, offload: str, dtype: A
     from pulid_app.models.quantized import QuantizedLinear
 
     if offload != "model_cpu_offload":
+        if device.split(":")[0] == "cuda":
+            logging.getLogger("uvicorn.error").info(
+                "Krea 2 : tous les composants restent en VRAM (--offload none). "
+                "Sur une carte de 12 Go, utilisez --offload model_cpu_offload "
+                "pour éviter la saturation et les transferts vers la mémoire partagée Windows."
+            )
         pipeline.to(device)
         return
     models = (pipeline.transformer, pipeline.text_encoder, pipeline.vae)
@@ -168,10 +174,14 @@ def configure_krea2_memory(pipeline: Any, *, device: str, offload: str, dtype: A
     free_bytes, _ = torch.cuda.mem_get_info(torch.device(device))
     # Activations, VAE tuilé et intermédiaires de déquantification bornés.
     required = resident + scratch + 2 * 1024**3
+    logger = logging.getLogger("uvicorn.error")
+    logger.info("Krea 2 : composant compacté max %.2f Gio, marge incluse %.2f Gio, VRAM libre %.2f Gio.",
+        resident / 1024**3, required / 1024**3, free_bytes / 1024**3)
     if required > free_bytes:
-        logging.getLogger(__name__).info("Krea 2 : offload par sous-module (VRAM disponible insuffisante pour un composant entier).")
+        logger.info("Krea 2 : offload par sous-module (VRAM disponible insuffisante pour un composant entier).")
         pipeline.enable_sequential_cpu_offload(device=device)
     else:
+        logger.info("Krea 2 : offload par composant, modèle compacté conservé en VRAM pendant le débruitage.")
         pipeline.enable_model_cpu_offload(device=device)
 
 
@@ -197,6 +207,8 @@ def load_krea2_pipeline(config: Krea2Config, *, device: str, dtype: Any, offload
         from diffusers.loaders.single_file_utils import convert_wan_vae_to_diffusers
         from safetensors.torch import load_file
         from transformers import AutoTokenizer, Qwen3VLTextConfig, Qwen3VLTextModel
+        from pulid_app.models.quantized_cuda import configure_cuda_kernels
+        from pulid_app.models.krea2_attention import configure_krea2_attention
 
         for path in (config.checkpoint, config.text_encoder):
             inspect_weight_format(path, allow_quantized=True)
@@ -224,6 +236,11 @@ def load_krea2_pipeline(config: Krea2Config, *, device: str, dtype: Any, offload
         vae.load_state_dict(state, strict=True, assign=True)
         vae = vae.to(dtype=torch.float32).eval().requires_grad_(False)
         del state
+
+        configure_cuda_kernels((transformer, text_encoder), device)
+        configure_krea2_attention(transformer, device)
+        if device.split(":")[0] == "cuda":
+            logging.getLogger("uvicorn.error").info("Krea 2 : noyaux CUDA configurés ; attention SDPA avec adaptation du GQA masqué.")
 
         pipeline = workflow_pipeline(
             transformer=transformer, text_encoder=text_encoder, tokenizer=tokenizer,

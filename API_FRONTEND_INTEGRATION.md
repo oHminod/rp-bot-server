@@ -786,6 +786,16 @@ ne crée aucun fichier de poids converti. Cette prise en charge ne change pas
 les paramètres ni la réponse HTTP. Les formats non pris en charge ou les
 échelles manquantes suivent l'erreur de chargement `500` décrite ci-dessus.
 
+Sur Windows/CUDA, le décodage requiert les noyaux Comfy Kitchen ajoutés à une
+installation existante par `install_windows.bat --update`, sans recréer `.venv`.
+Une dépendance absente/inutilisable produit également
+une erreur de chargement `500` avec la commande corrective. Le terminal trace
+les phases et les durées ; la réponse HTTP reste un PNG unique à la fin.
+Pour une carte de 12 Go, lancer `start_windows.bat --offload model_cpu_offload`.
+Le serveur, y compris l'exécutable direct `pulid-server`, écoute désormais sur
+`127.0.0.1:12693` par défaut, comme le proxy du frontend. Un port différent exige
+de régler aussi l'URL du backend du frontend.
+
 Krea est sérialisé avec toutes les générations SDXL et tous les embeddings BGE,
 y compris en mode CUDA concurrent. Après les requêtes en cours, SDXL et BGE sont
 déchargés avant Krea. Krea est libéré à la fin de chaque requête, succès ou erreur.

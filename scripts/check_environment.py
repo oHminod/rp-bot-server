@@ -12,6 +12,10 @@ import stat
 import tempfile
 
 
+class DependencyLockChangedError(ValueError):
+    """The runtime is compatible but its packages need synchronization."""
+
+
 def runtime_python(root: Path, state: dict[str, str]) -> Path:
     """Rebase only Python stored inside the project; external roots stay fixed."""
     if "managed_python_relative" in state:
@@ -45,7 +49,8 @@ def validate_state(root: Path, state: dict[str, str]) -> None:
     if state["uv"] != (root / ".uv-version").read_text().strip():
         raise ValueError("La version uv de l'installation est périmée.")
     if state["lock_sha256"] != hashlib.sha256((root / "uv.lock").read_text(encoding="utf-8").encode("utf-8")).hexdigest():
-        raise ValueError("Les dépendances verrouillées ont changé.")
+        command = "install_windows.bat --update" if sys.platform == "win32" else "./install_macos.sh"
+        raise DependencyLockChangedError(f"Les dépendances verrouillées ont changé. Exécutez {command}.")
 
 
 def windows_venv_launchers(venv: Path, python: Path) -> dict[Path, bytes]:
@@ -141,6 +146,8 @@ def check_environment(root: Path) -> dict[str, str]:
         if not managed.is_file() or Path(sys._base_executable).resolve() != managed.resolve():
             raise ValueError(f"Python géré absent ou déplacé : {managed}.")
         validate_state(root, state)
+    except DependencyLockChangedError:
+        raise
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise RuntimeError(
             f"Environnement PuLID inutilisable : {venv}. {exc} "
@@ -157,6 +164,9 @@ def main() -> int:
             prepare_environment(root)
             return 0
         state = check_environment(root)
+    except DependencyLockChangedError as exc:
+        print(f"[ERREUR] {exc}", file=sys.stderr)
+        return 1
     except (RuntimeError, OSError, ValueError, KeyError, TypeError) as exc:
         print(f"[ERREUR] {exc} Vérifiez que le dossier complet a été déplacé ; sinon relancez l’installateur.", file=sys.stderr)
         return 1

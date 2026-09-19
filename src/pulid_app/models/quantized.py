@@ -186,6 +186,7 @@ class QuantizedLinear(nn.Module):
         self.spec = spec
         self.bias = linear.bias
         self._fp8_unavailable = False
+        self.cuda_kernels = None
         prefix = source.removesuffix("weight")
         for name in ("weight", "weight_scale", "weight_scale_2", "input_scale"):
             key = prefix + name
@@ -235,7 +236,8 @@ class QuantizedLinear(nn.Module):
             except (RuntimeError, NotImplementedError) as exc:
                 self._fp8_unavailable = True
                 logging.getLogger(__name__).debug("FP8 natif indisponible, repli par couche : %s", exc)
-        weight = dequantize_layer(
+        decoder = self.cuda_kernels.dequantize if value.device.type == "cuda" and self.cuda_kernels is not None else dequantize_layer
+        weight = decoder(
             packed, self.weight_scale.to(value.device),
             None if self.weight_scale_2 is None else self.weight_scale_2.to(value.device),
             self.spec, value.dtype,

@@ -601,6 +601,8 @@ def test_embedding_memory_cli_modes_are_exclusive() -> None:
     defaults = parser.parse_args([])
     assert defaults.embedding_memory_mode == "concurrent"
     assert defaults.host == "127.0.0.1"
+    assert defaults.port == 12693
+    assert parser.parse_args(["--port", "8000"]).port == 8000
     assert defaults.network is False
     assert defaults.cors_origin == []
     network = parser.parse_args(["--network"])

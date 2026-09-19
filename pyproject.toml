@@ -25,6 +25,8 @@ dependencies = [
 # Dépendances complémentaires installées lorsque les phases d'inférence commencent.
 inference = [
   "accelerate==1.14.0",
+  # Noyaux CUDA précompilés, également utilisés par ComfyUI ; aucun runtime ComfyUI.
+  "comfy-kitchen==0.2.35; sys_platform == 'win32'",
   "diffusers==0.39.0",
   "huggingface-hub==1.27.0",
   "safetensors==0.8.0",
@@ -80,7 +82,7 @@ environments = [
   "sys_platform == 'win32'",
   "sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
-no-build-package = ["insightface", "llama-cpp-python", "torch", "torchvision"]
+no-build-package = ["comfy-kitchen", "insightface", "llama-cpp-python", "torch", "torchvision"]
 
 [[tool.uv.index]]
 name = "pytorch-cu130"

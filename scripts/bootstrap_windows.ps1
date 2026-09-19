@@ -1,4 +1,5 @@
 # Windows PowerShell 5.1 is supplied by Windows; no Python, uv, Git or compiler required.
+param([switch]$Update)
 $ErrorActionPreference = 'Stop'
 try {
     $projectRoot = Split-Path -Parent $PSScriptRoot
@@ -18,6 +19,7 @@ try {
     $installed = ''
     if (Test-Path -LiteralPath $uv -PathType Leaf) { $installed = (& $uv --version) }
     if ($installed -notmatch ('^uv ' + [regex]::Escape($uvVersion) + '(\s|$)')) {
+        if ($Update) { throw "uv $uvVersion absent ou incompatible : $uv. Utilisez l'installation complete." }
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         Invoke-RestMethod "https://astral.sh/uv/$uvVersion/install.ps1" | Invoke-Expression
     }
@@ -26,11 +28,18 @@ try {
     if (-not (Test-Path -LiteralPath $uv -PathType Leaf)) { throw "Executable uv absent apres installation : $uv" }
     $installed = (& $uv --version)
     if ($LASTEXITCODE -ne 0 -or $installed -notmatch ('^uv ' + [regex]::Escape($uvVersion) + '(\s|$)')) { throw "uv $uvVersion requis : $uv" }
-    & $uv python install "cpython-$pythonVersion-windows-x86_64-none" --no-bin --no-registry --no-config
-    if ($LASTEXITCODE -ne 0) { throw "Python gere indisponible : $env:UV_PYTHON_INSTALL_DIR" }
+    if (-not $Update) {
+        & $uv python install "cpython-$pythonVersion-windows-x86_64-none" --no-bin --no-registry --no-config
+        if ($LASTEXITCODE -ne 0) { throw "Python gere indisponible : $env:UV_PYTHON_INSTALL_DIR" }
+    }
     # Full patch-version path: never depend on uv's movable 3.11 junction.
     $python = Join-Path $env:UV_PYTHON_INSTALL_DIR "cpython-$pythonVersion-windows-x86_64-none\python.exe"
-    & $python -I (Join-Path $PSScriptRoot 'install_environment.py') --uv $uv --models-root $modelsRoot --profile $env:PULID_INSTALL_PROFILE
+    if (-not (Test-Path -LiteralPath $python -PathType Leaf)) { throw "Python gere absent : $python. Utilisez l'installation complete." }
+    if ($Update) {
+        & $python -I (Join-Path $PSScriptRoot 'install_environment.py') --uv $uv --models-root $modelsRoot --update
+    } else {
+        & $python -I (Join-Path $PSScriptRoot 'install_environment.py') --uv $uv --models-root $modelsRoot --profile $env:PULID_INSTALL_PROFILE
+    }
     if ($LASTEXITCODE -ne 0) { throw 'Installation verrouillee interrompue; voir le diagnostic ci-dessus.' }
     exit 0
 } catch {

@@ -15,16 +15,25 @@ set "VIRTUAL_ENV="
 set "PULID_INSTALL_PROFILE=%PULID_INSTALL_PROFILE%"
 if not defined PULID_INSTALL_PROFILE set "PULID_INSTALL_PROFILE=development"
 set "PULID_CONFIGURE_NETWORK=0"
+set "PULID_UPDATE_ONLY=0"
+set "PULID_PROFILE_EXPLICIT=0"
 
 :parse_arguments
 if "%~1"=="" goto :arguments_ready
 if /I "%~1"=="--production" (
     set "PULID_INSTALL_PROFILE=production"
+    set "PULID_PROFILE_EXPLICIT=1"
     shift
     goto :parse_arguments
 )
 if /I "%~1"=="--development" (
     set "PULID_INSTALL_PROFILE=development"
+    set "PULID_PROFILE_EXPLICIT=1"
+    shift
+    goto :parse_arguments
+)
+if /I "%~1"=="--update" (
+    set "PULID_UPDATE_ONLY=1"
     shift
     goto :parse_arguments
 )
@@ -39,6 +48,14 @@ echo [ERREUR] Option d'installation inconnue : %~1
 exit /b 2
 
 :arguments_ready
+if "%PULID_UPDATE_ONLY%"=="1" (
+    if "%PULID_PROFILE_EXPLICIT%"=="1" goto :update_options_error
+    if "%PULID_CONFIGURE_NETWORK%"=="1" goto :update_options_error
+    if not exist "%PROJECT_DIR%.venv\pulid-runtime.json" (
+        echo [ERREUR] --update exige une installation geree existante. Utilisez install_windows.bat.
+        exit /b 1
+    )
+)
 if /I "%PULID_INSTALL_PROFILE%"=="production" goto :profile_ready
 if /I "%PULID_INSTALL_PROFILE%"=="development" goto :profile_ready
 echo [ERREUR] Profil PULID_INSTALL_PROFILE inconnu : %PULID_INSTALL_PROFILE%
@@ -73,6 +90,10 @@ if exist "%DEFAULT_MODELS_ROOT%\" (
 )
 
 :prompt_models_root
+if "%PULID_UPDATE_ONLY%"=="1" (
+    echo [ERREUR] Racine des modeles introuvable. Verifiez config\local.yaml ou PULID_MODELS_ROOT.
+    exit /b 1
+)
 set "USE_DEFAULT="
 set /p "USE_DEFAULT=Utiliser l'emplacement par defaut %DEFAULT_MODELS_ROOT% ? [O/n] "
 if /I "%USE_DEFAULT%"=="N" goto :custom_models_root
@@ -100,6 +121,10 @@ echo Installation existante detectee : %PULID_MODELS_ROOT%
 
 :models_root_ready
 if exist "%PULID_MODELS_ROOT%\" goto :models_root_available
+if "%PULID_UPDATE_ONLY%"=="1" (
+    echo [ERREUR] Dossier absent : %PULID_MODELS_ROOT%. Aucune creation en mode --update.
+    exit /b 1
+)
 mkdir "%PULID_MODELS_ROOT%"
 if errorlevel 1 (
     echo [ERREUR] Impossible de creer le dossier de modeles :
@@ -125,6 +150,8 @@ set "TORCH_DLL_DIR=%PROJECT_DIR%.venv\Lib\site-packages\torch\lib"
 set "LLAMA_CPP_LIB_DIR=%PROJECT_DIR%.venv\Lib\site-packages\llama_cpp\lib"
 set "PATH=%TORCH_DLL_DIR%;%PATH%"
 cd /d "%PROJECT_DIR%"
+
+if "%PULID_UPDATE_ONLY%"=="1" goto :update_dependencies
 
 echo Installation de Python gere et recreation de .venv depuis uv.lock...
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PROJECT_DIR%scripts\bootstrap_windows.ps1"
@@ -206,6 +233,18 @@ echo Appuyez sur une touche pour fermer cette fenetre.
 pause >nul
 exit /b 0
 
+:update_dependencies
+echo Mise a jour des dependances de .venv depuis uv.lock, sans recreation...
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PROJECT_DIR%scripts\bootstrap_windows.ps1" -Update
+if errorlevel 1 exit /b 1
+echo Mise a jour terminee. Modeles et configuration conserves.
+echo Lancez ensuite : start_windows.bat
+exit /b 0
+
+:update_options_error
+echo [ERREUR] --update conserve le profil existant. Ne pas combiner avec --production, --development ou --network.
+exit /b 2
+
 :dependency_error
 echo [ERREUR] Installation des dependances impossible.
 echo InsightFace doit provenir de sa wheel officielle, sans Microsoft C++ Build Tools.
@@ -257,6 +296,8 @@ exit /b 1
 
 :usage
 echo Usage : install_windows.bat [--production^|--development] [--network]
+echo        install_windows.bat --update
+echo   --update      met a jour les dependances sans recreer .venv ni preparer les modeles
 echo   --production  installe le runtime sans dependances de test
 echo   --development conserve l'installation editable avec les dependances dev
 echo   --network     propose explicitement la regle de pare-feu privee

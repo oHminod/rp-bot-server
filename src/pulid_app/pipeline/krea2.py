@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from contextlib import contextmanager
+import logging
 import math
+from time import perf_counter
 from typing import Any
 
 from pulid_app.config import AppConfig
@@ -69,6 +72,61 @@ def shifted_sigma(value: float) -> float:
     return math.exp(1.15) / (math.exp(1.15) + (1 / value - 1))
 
 
+@contextmanager
+def generation_progress(pipeline: Any, torch: Any, device: str, steps: int):
+    """Logs de phases et de steps ; aucun tenseur ni prompt conservé par les hooks."""
+    logger = logging.getLogger("uvicorn.error")
+    if not logger.isEnabledFor(logging.INFO):
+        yield None
+        return
+    handles = []
+    phase_started = perf_counter()
+    step_started = phase_started
+    diffusion_started = False
+
+    def synchronize() -> None:
+        if device.split(":")[0] == "cuda":
+            torch.cuda.synchronize(device)
+
+    def text_start(module, args):
+        nonlocal phase_started
+        phase_started = perf_counter()
+        logger.info("Krea 2 : encodage du prompt...")
+
+    def text_end(module, args, output):
+        synchronize()
+        logger.info("Krea 2 : prompt encodé en %.2f s.", perf_counter() - phase_started)
+
+    def diffusion_start(module, args):
+        nonlocal step_started, diffusion_started
+        if not diffusion_started:
+            diffusion_started = True
+            step_started = perf_counter()
+            logger.info("Krea 2 : début de la diffusion (%d steps).", steps)
+
+    def step_end(pipe, step, timestep, callback_kwargs):
+        nonlocal step_started
+        synchronize()
+        now = perf_counter()
+        logger.info("Krea 2 : step %d/%d terminé en %.2f s.", step + 1, steps, now - step_started)
+        step_started = now
+        if step + 1 == steps:
+            logger.info("Krea 2 : décodage VAE...")
+        return callback_kwargs
+
+    try:
+        text = getattr(pipeline, "text_encoder", None)
+        if text is not None:
+            handles.extend((text.register_forward_pre_hook(text_start), text.register_forward_hook(text_end)))
+        transformer = getattr(pipeline, "transformer", None)
+        if transformer is not None:
+            handles.append(transformer.register_forward_pre_hook(diffusion_start))
+        yield step_end
+    finally:
+        for handle in handles:
+            handle.remove()
+
+
 class Krea2Generator:
     def __init__(self, config: AppConfig, *, device: str | None = None, dtype_name: str | None = None, offload_strategy: str | None = None) -> None:
         self.config = config
@@ -105,11 +163,16 @@ class Krea2Generator:
         return self.pipeline
 
     def generate(self, parameters: Krea2Parameters) -> tuple[Any, dict[str, Any]]:
+        logger = logging.getLogger("uvicorn.error")
+        started = perf_counter()
+        logger.info("Krea 2 : chargement sur %s (%s)...", self.device, self.offload)
         pipeline = self._load()
+        logger.info("Krea 2 : composants prêts en %.2f s, calcul %s, image %dx%d.",
+            perf_counter() - started, self.dtype, parameters.width, parameters.height)
         torch = self._torch
         sigmas = beta_sigmas(parameters.steps, parameters.denoise)
         try:
-            with torch.inference_mode():
+            with torch.inference_mode(), generation_progress(pipeline, torch, self.device, len(sigmas)) as progress:
                 # Générateur CPU également sur MPS ; pas de seed globale partagée.
                 generator = torch.Generator(device="cpu").manual_seed(parameters.seed)
                 latents = pipeline.prepare_latents(
@@ -123,7 +186,9 @@ class Krea2Generator:
                     num_inference_steps=len(sigmas), sigmas=sigmas,
                     guidance_scale=parameters.cfg - 1, generator=generator,
                     latents=latents, max_sequence_length=512,
+                    callback_on_step_end=progress,
                 )
+            logger.info("Krea 2 : image terminée en %.2f s (chargement inclus).", perf_counter() - started)
             metadata = {
                 **asdict(parameters), "effective_steps": len(sigmas), "device": self.device,
                 "dtype": str(self.dtype), "engine": "krea2", "identity_transfer": False,

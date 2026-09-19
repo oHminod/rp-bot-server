@@ -105,6 +105,13 @@ les installateurs réutilisent les fichiers valides déjà présents et ne les
 téléchargent de nouveau que s’ils manquent ou échouent à leur contrôle
 d’intégrité.
 
+Pour mettre à jour une installation Windows existante, utiliser directement
+`install_windows.bat --update`, y compris en production. Ce mode conserve le
+profil enregistré et `.venv`, synchronise les dépendances depuis le verrou et
+actualise le paquet applicatif. Il ne prépare pas les modèles. Les dépendances
+déjà conformes, les paquets supplémentaires et la DLL CPU portable vérifiée sont
+conservés. Un changement de version Python exige une installation complète.
+
 ## Première GitHub Release
 
 Avant une première release publique :

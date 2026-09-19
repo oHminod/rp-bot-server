@@ -331,17 +331,34 @@ def test_real_cuda_nvfp4_layer_when_available(runtime, tmp_path):
     torch = runtime
     if not torch.cuda.is_available():
         pytest.skip("CUDA requis pour vérifier la déquantification NVFP4 sur GPU")
-    tensors, dense = nvfp4_tensors(torch, "gate.")
+    from pulid_app.models.quantized_cuda import configure_cuda_kernels
+    tensors, dense = nvfp4_tensors(torch, "gate.", rows=144)
     path = tmp_path / "cuda-nvfp4.safetensors"
     save(torch, path, tensors, nv_layer="gate")
     with torch.device("meta"):
         module = torch.nn.ModuleDict({"gate": torch.nn.Linear(dense.shape[1], dense.shape[0], bias=False)})
     module = load_safetensors_module(module, path, lambda k: k, dtype=torch.float16).to("cuda")
+    configure_cuda_kernels((module,), "cuda")
     value = torch.ones(1, dense.shape[1], device="cuda", dtype=torch.float16)
     with torch.inference_mode():
         actual = module["gate"](value)
     torch.testing.assert_close(actual, value @ dense.to(device="cuda", dtype=value.dtype).t())
     assert module["gate"].weight.dtype == torch.uint8
+
+
+@pytest.mark.gpu
+def test_real_cuda_fp8_decode_fallback_when_available(runtime, tmp_path):
+    torch = runtime
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA requis pour vérifier le décodage FP8 Comfy Kitchen")
+    from pulid_app.models.quantized_cuda import configure_cuda_kernels
+    layer, dense = load_fp8_layer(torch, tmp_path, full_precision=True)
+    configure_cuda_kernels((layer,), "cuda")
+    layer.to("cuda")
+    value = torch.ones(1, 32, device="cuda", dtype=torch.float16)
+    with torch.inference_mode():
+        actual = layer(value)
+    torch.testing.assert_close(actual, value @ dense.to(device="cuda", dtype=value.dtype).t())
 
 
 @pytest.mark.gpu

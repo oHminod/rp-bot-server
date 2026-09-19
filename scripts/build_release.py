@@ -62,6 +62,7 @@ STATIC_FILES = (
 )
 TREE_DIRECTORIES = ("frontend", "src", "runtime", "requirements")
 SCRIPT_NAMES = (
+    "benchmark_krea2_cuda.py",
     "build_release.py",
     "bootstrap_windows.ps1",
     "install_environment.py",

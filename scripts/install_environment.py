@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Recreate PuLID's locked environment using only the managed bootstrap Python."""
+"""Install or update PuLID's locked environment using the managed bootstrap Python."""
 from __future__ import annotations
 
 import argparse
@@ -74,6 +74,9 @@ def patch_windows_cpu_backend(venv: Path) -> None:
     destination = venv / "Lib" / "site-packages" / "llama_cpp" / "lib"
     if not (destination / "ggml-cuda.dll").is_file():
         raise RuntimeError(f"Wheel llama-cpp CUDA incomplète : {destination}")
+    installed = destination / "ggml-cpu.dll"
+    if installed.is_file() and hashlib.sha256(installed.read_bytes()).hexdigest() == CPU_DLL_SHA256:
+        return
     with tempfile.TemporaryDirectory(dir=venv, prefix="pulid-dll-") as temporary:
         wheel = Path(temporary) / "cpu.whl"
         with urllib.request.urlopen(CPU_WHEEL_URL, timeout=120) as response, wheel.open("wb") as output:
@@ -96,7 +99,39 @@ def verify_lock(root: Path) -> None:
             raise RuntimeError(f"Verrou incohérent : {path}. Récupérez une version complète des sources PuLID.")
 
 
-def install(root: Path, models_root: Path, uv: Path, profile: str) -> None:
+def verify_update_environment(root: Path, python: Path, environment: dict[str, str]) -> str:
+    """Refuse an incompatible venv before uv could implicitly recreate it."""
+    venv = root / ".venv"
+    try:
+        state = json.loads((venv / "pulid-runtime.json").read_text(encoding="utf-8"))
+        version = (root / ".python-version").read_text().strip()
+        if Path(state["project_root"]).resolve() != root.resolve():
+            raise ValueError("Le dossier du projet a changé depuis l'installation.")
+        if state["python"] != version or Path(state["managed_python"]).resolve() != python.resolve():
+            raise ValueError("Le Python géré a changé depuis l'installation.")
+        if state["profile"] not in {"production", "development"}:
+            raise ValueError("Profil d'installation inconnu.")
+        executable = venv / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+        probe = subprocess.check_output([
+            str(executable), "-I", "-c",
+            "import json, platform, sys; print(json.dumps(dict("
+            "prefix=sys.prefix, base=sys._base_executable, version=platform.python_version())))",
+        ], text=True, env=environment)
+        runtime = json.loads(probe)
+        if (runtime["version"] != version or Path(runtime["prefix"]).resolve() != venv.resolve()
+                or Path(runtime["base"]).resolve() != python.resolve()):
+            raise ValueError("L'interpréteur de .venv ne correspond pas au Python géré attendu.")
+    except (OSError, ValueError, KeyError, TypeError, subprocess.CalledProcessError) as exc:
+        raise RuntimeError(
+            f"Mise à jour impossible pour {venv} : {exc}. Aucune recréation automatique. "
+            "Utilisez l'installation complète si le runtime est absent ou incompatible."
+        ) from exc
+    return state["profile"]
+
+
+def install(root: Path, models_root: Path, uv: Path, profile: str | None = None, *, update: bool = False) -> None:
+    if update and profile is not None:
+        raise ValueError("--update conserve le profil existant ; ne le combinez pas avec --profile.")
     verify_lock(root)
     python = verify_bootstrap(root, models_root)
     environment = clean_environment(root, models_root)
@@ -130,8 +165,16 @@ def install(root: Path, models_root: Path, uv: Path, profile: str) -> None:
     def run(*arguments: str) -> None:
         subprocess.run([str(uv), *arguments, "--no-config"], cwd=root, env=environment, check=True)
 
-    run("venv", "--clear", "--relocatable", "--python", str(python), str(venv))
+    if update:
+        profile = verify_update_environment(root, python, environment)
+        print(f"Mise à jour incrémentale de {venv} (profil {profile}).")
+    else:
+        profile = profile or "development"
+        run("venv", "--clear", "--relocatable", "--python", str(python), str(venv))
     common = ("sync", "--frozen", "--python", str(python), "--no-default-groups")
+    if update:
+        # In particular, the build-only pass must not uninstall the runtime.
+        common += ("--inexact",)
     run(*common, "--only-group", "build", "--no-install-project")
     extras: list[str] = []
     for name in ("inference", "pulid", "server", "embeddings"):
@@ -140,6 +183,10 @@ def install(root: Path, models_root: Path, uv: Path, profile: str) -> None:
         extras.extend(("--extra", "dev"))
     else:
         extras.append("--no-editable")
+    if update:
+        # Refresh our small package, including non-editable production code.
+        # Third-party packages already matching the lock are left installed.
+        extras.extend(("--reinstall-package", "pulid-app"))
     # --no-config excludes machine/user uv settings. Preserve the project's
     # wheel-only requirements explicitly, without enabling config discovery.
     project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
@@ -165,10 +212,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--uv", type=Path, required=True)
     parser.add_argument("--models-root", type=Path, required=True)
-    parser.add_argument("--profile", choices=("production", "development"), required=True)
+    parser.add_argument("--profile", choices=("production", "development"))
+    parser.add_argument("--update", action="store_true", help="Synchroniser les dépendances sans recréer .venv ni changer son profil.")
     args = parser.parse_args()
     try:
-        install(Path(__file__).resolve().parents[1], args.models_root.resolve(), args.uv.resolve(), args.profile)
+        install(Path(__file__).resolve().parents[1], args.models_root.resolve(), args.uv.resolve(), args.profile, update=args.update)
     except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as exc:
         print(f"[ERREUR] {exc}\nRelancez l'installateur de votre plateforme.", file=sys.stderr)
         return 1

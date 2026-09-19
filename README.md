@@ -168,12 +168,32 @@ l’installateur le demande, ou acceptez le téléchargement de SDXL Base 1.0. P
 l’ajouter ultérieurement, déposez le fichier dans ce même dossier puis relancez
 le script d’installation.
 
-L’installation recrée systématiquement `.venv` ; fermer le serveur avant de la
+L’installation complète recrée `.venv` ; fermer le serveur avant de la
 relancer. Les modèles valides restent réutilisés. Python **3.11.16** est toujours
 installé par uv **0.12.10** dans `PuLID_models/other/uv-python-<plateforme>` ;
 les outils du PATH et le Python système ne sont jamais choisis. Le chemin utilisé
 contient la version complète, sans dépendre de la jonction mineure `cpython-3.11-*`.
 Les binaires uv sont également propres au projet, sous `other/uv-<plateforme>-bin`.
+
+Sous Windows, pour mettre à jour une installation existante après avoir récupéré
+le nouveau code, fermer le serveur et le frontend puis lancer :
+
+```powershell
+.\install_windows.bat --update
+```
+
+Ce mode conserve `.venv` et son profil production/développement. Il ajoute les
+dépendances manquantes et met à niveau celles dont la version dans `uv.lock` a
+changé ; les dépendances déjà conformes et les paquets supplémentaires restent
+installés. Le petit paquet applicatif PuLID est réinstallé pour actualiser aussi
+le code en profil production. La DLL CPU portable déjà conforme est réutilisée.
+Ce mode ne lance ni la préparation des modèles, ni les tests de génération/BGE,
+ni la configuration réseau. Il ne modifie pas `config/local.yaml`.
+
+Python et uv doivent déjà correspondre aux versions requises. Un environnement
+absent ou incompatible provoque un arrêt explicite, sans recréation automatique ;
+l'installation complète reste disponible avec `install_windows.bat` sans option.
+`--update` s'utilise seul, sans option de profil ni `--network`.
 
 `uv.lock` fixe les dépendances directes, indirectes et de construction, leurs
 sources et SHA-256. Windows utilise PyTorch 2.13.0+cu130, Torchvision 0.28.0+cu130
@@ -638,13 +658,24 @@ utilisent le calcul CUDA natif sur Ada (dont RTX 4070 SUPER) ou plus récent
 si le noyau et les dimensions le permettent, avec un repli par couche.
 Le marqueur `full_precision_matrix_mult` est respecté. Cette stratégie suit
 le principe de stockage compact et de calcul à la demande de ComfyUI, sans
-en importer le runtime. L'accélération NVFP4 native Blackwell n'est pas utilisée.
+en importer le runtime. Sur CUDA, le décodage par couche utilise les noyaux
+précompilés **Comfy Kitchen 0.2.35**, également utilisés par ComfyUI. Un noyau
+absent produit une erreur explicite au chargement ; aucun repli vers la boucle
+PyTorch lente n'est effectué sur CUDA. Les multiplications NVFP4 natives de
+Blackwell ne sont pas utilisées. L'attention masquée adapte les têtes K/V
+pour éviter le repli GQA vers une matrice d'attention explicite coûteuse.
 
-Pour une carte CUDA de 12 Go, lancer le serveur avec :
+Après une mise à jour du code, lancer `install_windows.bat --update` pour installer
+les dépendances verrouillées, dont Comfy Kitchen. Cela ne télécharge pas les
+poids Krea ni Qwen3-VL. Puis, pour une carte CUDA de 12 Go :
 
 ```powershell
-.\.venv\Scripts\pulid-server.exe --device cuda --offload model_cpu_offload
+.\start_windows.bat --offload model_cpu_offload
 ```
+
+Le script prépare les bibliothèques CUDA et écoute sur `127.0.0.1:12693`,
+l'adresse attendue par le frontend léger. L'exécutable `pulid-server` utilise
+également `12693` par défaut ; `--port` permet de le modifier explicitement.
 
 Ce mode charge successivement Qwen, Krea puis le VAE. Si un composant compacté
 et la marge de calcul estimée dépassent la VRAM libre, Krea utilise l'offload
@@ -653,6 +684,22 @@ compactés. La marge est une estimation, pas une garantie pour toutes les
 résolutions ; réduire la résolution si la mémoire manque. `--offload none`
 conserve tous les composants sur le device. MPS et CPU utilisent ce dernier
 mode, avec déquantification temporaire par couche (CPU en float32).
+
+Le terminal distingue le chargement, l'encodage Qwen, chaque step de diffusion
+et le décodage VAE, avec leurs durées. Si le premier step semble bloqué,
+relever ces lignes et l'utilisation GPU pendant l'attente :
+
+```powershell
+nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv
+```
+
+Ce benchmark compare les décodeurs CUDA et PyTorch sur une matrice synthétique,
+sans charger de modèle ni générer de fichier. Il ne mesure pas la génération
+complète et ne garantit pas une durée identique à ComfyUI :
+
+```powershell
+.\.venv\Scripts\python.exe scripts\benchmark_krea2_cuda.py
+```
 
 Les quatre chemins sont centralisés dans la section `krea2` de
 `config/default.yaml` et `config/local.yaml`, relatifs à `models_root`.
@@ -677,13 +724,14 @@ pour les champs, les limites, les en-têtes et les erreurs.
 Références techniques : [Krea 2 officiel](https://github.com/krea-ai/krea-2),
 [pipeline Diffusers](https://github.com/huggingface/diffusers/blob/v0.39.0/src/diffusers/pipelines/krea2/pipeline_krea2.py),
 [scheduler beta de référence](https://github.com/Comfy-Org/ComfyUI/blob/master/comfy/samplers.py),
-[format NVFP4](https://github.com/Comfy-Org/comfy-quants/blob/main/docs/formats/nvfp4.md).
+[format NVFP4](https://github.com/Comfy-Org/comfy-quants/blob/main/docs/formats/nvfp4.md),
+[noyaux Comfy Kitchen](https://github.com/Comfy-Org/comfy-kitchen).
 Les tests utilisent des composants factices et de petits composants Diffusers
 avec des poids synthétiques, y compris les formats quantifiés et l'offload.
 Pour vérifier les noyaux CUDA sur le PC, les tests ne téléchargent aucun modèle :
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest tests/test_quantized_krea2.py -q
+.\.venv\Scripts\python.exe -m pytest tests/test_quantized_krea2.py tests/test_krea2_cuda_performance.py -q
 ```
 
 Les tests GPU sont ignorés lorsque le matériel correspondant est absent.

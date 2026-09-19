@@ -105,6 +105,17 @@ wheels = [
 ]
 
 [[package]]
+name = "comfy-kitchen"
+version = "0.2.35"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/24/be/01138a0a97a2726f16735076840a30853c21d0df48afdad6a5ba714aca07/comfy_kitchen-0.2.35-cp311-cp311-win_amd64.whl", hash = "sha256:a03cee84635f039da39d5eed9640ab50d47b80e370717b3bee0e0561300389cc", size = 38541664, upload-time = "2026-09-17T23:05:10.688Z" },
+    { url = "https://files.pythonhosted.org/packages/d0/f4/180a69b2b6b812f0fad2dfe0d020a773edf774c806bf88537a8043d7f36f/comfy_kitchen-0.2.35-cp312-abi3-win_amd64.whl", hash = "sha256:0d05380b8dade098c4acecf8fed876a0ae0d14cd8a28934a83ab843d7ceb8e16", size = 38542167, upload-time = "2026-09-17T23:05:18.508Z" },
+    { url = "https://files.pythonhosted.org/packages/8a/0b/67eb3acd07774cdce4f161d180e059654c47e2361df665f5e15534226eb9/comfy_kitchen-0.2.35-cp312-abi3-win_arm64.whl", hash = "sha256:17edfa3e09883f36fb475d81302b3467087e1b9399105577c31a3174abc1ded8", size = 6171368, upload-time = "2026-09-17T23:05:20.922Z" },
+    { url = "https://files.pythonhosted.org/packages/14/60/8f075cceb07cb78d3792446b1156b7f5a41b260ac60645ef1483e34f71ce/comfy_kitchen-0.2.35-py3-none-any.whl", hash = "sha256:f95d48638add1a36eed14037820c0f85f0df765321eeb53f0750bef8906abcbe", size = 213513, upload-time = "2026-09-17T23:05:22.162Z" },
+]
+
+[[package]]
 name = "contourpy"
 version = "1.3.3"
 source = { registry = "https://pypi.org/simple" }
@@ -828,6 +839,7 @@ embeddings = [
 ]
 inference = [
     { name = "accelerate" },
+    { name = "comfy-kitchen", marker = "sys_platform == 'win32'" },
     { name = "diffusers" },
     { name = "huggingface-hub" },
     { name = "safetensors" },
@@ -858,6 +870,7 @@ build = [
 [package.metadata]
 requires-dist = [
     { name = "accelerate", marker = "extra == 'inference'", specifier = "==1.14.0" },
+    { name = "comfy-kitchen", marker = "sys_platform == 'win32' and extra == 'inference'", specifier = "==0.2.35" },
     { name = "diffusers", marker = "extra == 'inference'", specifier = "==0.39.0" },
     { name = "einops", marker = "extra == 'pulid'", specifier = "==0.8.2" },
     { name = "facexlib", marker = "extra == 'pulid'", specifier = "==0.3.0" },
