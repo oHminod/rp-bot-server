@@ -40,7 +40,7 @@ krea2:
   # Les poids quantifiés restent compactés ; le nom du fichier n'impose pas le dtype.
   checkpoint: krea2/checkpoints/krea2.safetensors
   text_encoder: text_encoders/qwen3vl/qwen3vl_4b_bf16.safetensors
-  # Config et tokenizer Qwen3-VL-4B-Instruct, fournis manuellement aussi.
+  # Config/tokenizer Qwen3-VL-4B-Instruct partagés, préparés automatiquement.
   text_encoder_config_dir: text_encoders/qwen3vl/config
   vae: vae/qwen_image_vae.safetensors
 

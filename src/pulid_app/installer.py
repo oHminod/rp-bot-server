@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import os
 from pathlib import Path
@@ -120,6 +120,27 @@ KREA2_VAE = HuggingFaceAsset(
     filename="split_files/vae/qwen_image_vae.safetensors",
     sha256="a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f",
     revision="dfe60a0d63f0b946628080f070978594983b8b6e",
+)
+# Configuration partagée de la branche texte 4B ; aucun poids dans cette liste.
+QWEN3VL_CONFIG_REPOSITORY = "Qwen/Qwen3-VL-4B-Instruct"
+QWEN3VL_CONFIG_REVISION = "ebb281ec70b05090aa6165b016eac8ec08e71b17"
+QWEN3VL_CONFIG_ASSETS = tuple(
+    HuggingFaceAsset(
+        name=f"Qwen3-VL configuration/tokenizer : {filename}",
+        relative_path=f"{QWEN3VL_CONFIG_DIR}/{filename}",
+        repository=QWEN3VL_CONFIG_REPOSITORY,
+        filename=filename,
+        sha256=sha256,
+        revision=QWEN3VL_CONFIG_REVISION,
+    )
+    for filename, sha256 in (
+        ("config.json", "edac7703329133edfc53e46ac0081835144c99d7eebf28b71c732694d435224d"),
+        ("tokenizer.json", "a5d85b6dcc535e6b93115a9ef287e6132fdbf30270da6218194ba742261173c7"),
+        ("tokenizer_config.json", "c2da771801886ad9ae98181793ffd3dfb7f1af30f6f7c6a4e15d7dbba52e2399"),
+        ("vocab.json", "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"),
+        ("merges.txt", "599bab54075088774b1733fde865d5bd747cbcc7a547c5bc12610e874e26f5e3"),
+        ("chat_template.json", "6f8a6a55027e3da5160105556cda5dd69f6423f1c32645f6730d32de7773d0c4"),
+    )
 )
 EVA_CLIP_REPOSITORY = "QuanSun/EVA-CLIP"
 EVA_CLIP_FILENAME = "EVA02_CLIP_L_336_psz14_s6B.pt"
@@ -812,8 +833,29 @@ def write_krea2_config(models_root: Path, *, destination: Path = LOCAL_CONFIG_PA
     return destination
 
 
+def ensure_qwen3vl_configuration(
+    models_root: Path, destination: Path, console: Console,
+    *, downloader: Callable[..., str] | None = None,
+) -> Path:
+    """Installe seulement les fichiers de configuration/tokenizer officiels épinglés."""
+    root = models_root.resolve()
+    directory = destination.resolve()
+    if not directory.is_relative_to(root):
+        raise InstallerError(f"La configuration Qwen doit rester sous {root} : {destination}")
+    for asset in QWEN3VL_CONFIG_ASSETS:
+        target = directory / asset.filename
+        if target.is_symlink() or (target.exists() and not target.is_file()):
+            raise InstallerError(f"Fichier de configuration Qwen non régulier : {target}. Retirez ce lien ou dossier puis relancez l'installation.")
+    configure_external_model_caches(root)
+    for asset in QWEN3VL_CONFIG_ASSETS:
+        local_asset = replace(asset, relative_path=(directory / asset.filename).relative_to(root).as_posix())
+        ensure_huggingface_asset(root, local_asset, console, downloader=downloader)
+    console.print(f"[green]✓[/] Configuration/tokenizer partagés Qwen3-VL-4B-Instruct : {directory}")
+    return directory
+
+
 def prepare_krea2_assets(models_root: Path, config: Krea2Config, console: Console) -> None:
-    """Crée les dossiers manuels et télécharge seulement le VAE absent."""
+    """Prépare les configurations Qwen et le VAE ; les poids Krea/Qwen restent manuels."""
     for directory in (config.checkpoint.parent, config.text_encoder.parent, config.text_encoder_config_dir, config.vae.parent):
         if not directory.resolve(strict=False).is_relative_to(models_root.resolve(strict=False)):
             raise InstallerError(f"Les composants Krea doivent rester sous {models_root} : {directory}")
@@ -834,7 +876,7 @@ def prepare_krea2_assets(models_root: Path, config: Krea2Config, console: Consol
         state = f"{len(available)} fichier(s) détecté(s)" if available else "à fournir manuellement (BF16/FP16/FP32, NVFP4 Comfy ou FP8 E4M3 scaled)"
         console.print(f"{label} : {state} — défaut configuré : {path}")
         console.print(f"Tout nom .safetensors est accepté dans {path.parent} ; sélection via GET /models/krea2 ou le frontend.")
-    console.print(f"Config/tokenizer Qwen3-VL-4B-Instruct à fournir manuellement : {config.text_encoder_config_dir}")
+    ensure_qwen3vl_configuration(models_root, config.text_encoder_config_dir, console)
 
 
 def prepare_required_assets(
@@ -872,9 +914,14 @@ def build_parser() -> argparse.ArgumentParser:
             "Installe ou répare les modèles et configurations nécessaires à PuLID."
         )
     )
-    parser.add_argument(
+    preparation = parser.add_mutually_exclusive_group()
+    preparation.add_argument(
         "--krea2-only", action="store_true",
-        help="Prépare uniquement Krea 2 : dossiers manuels et VAE manquant, sans SDXL/PuLID/BGE.",
+        help="Prépare Krea 2 : dossiers, configuration/tokenizer Qwen et VAE manquant, sans SDXL/PuLID/BGE.",
+    )
+    preparation.add_argument(
+        "--qwen3vl-config-only", action="store_true",
+        help="Complète/répare seulement la configuration/tokenizer Qwen partagée, sans poids ni modification YAML.",
     )
     parser.add_argument(
         "--models-root",
@@ -918,6 +965,10 @@ def run_installation(args: argparse.Namespace, console: Console) -> int:
         models_root = find_existing_models_root() or prompt_models_root()
     ensure_writable_directory(models_root)
     configure_external_model_caches(models_root)
+    if args.qwen3vl_config_only:
+        config = load_config(models_root_override=models_root)
+        ensure_qwen3vl_configuration(models_root, config.krea2.text_encoder_config_dir, console)
+        return 0
     for relative in (
         "checkpoints",
         "huggingface/hub",

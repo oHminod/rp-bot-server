@@ -36,10 +36,11 @@ def validate_krea2_assets(config: Krea2Config) -> None:
             raise ModelLoadError(f"Format attendu .safetensors : {path}.")
     require_krea_file(config.vae, "Relancez pulid-install --krea2-only pour installer le VAE.")
     directory = config.text_encoder_config_dir
+    action = "Relancez pulid-install --qwen3vl-config-only (ou install_windows.bat --update) pour préparer les fichiers partagés."
     if not directory.is_dir():
-        raise ModelNotFoundError(f"Configuration qwen3vl absente : {directory}. Déposez config.json et le tokenizer Qwen3-VL-4B-Instruct dans ce dossier.")
+        raise ModelNotFoundError(f"Configuration qwen3vl absente : {directory}. {action}")
     for filename in ("config.json", "tokenizer_config.json", "tokenizer.json"):
-        require_krea_file(directory / filename, "Copiez manuellement les fichiers de configuration/tokenizer Qwen3-VL-4B-Instruct.")
+        require_krea_file(directory / filename, action)
 
 
 def transformer_key(key: str) -> str:

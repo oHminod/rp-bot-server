@@ -237,7 +237,7 @@ exit /b 0
 echo Mise a jour des dependances de .venv depuis uv.lock, sans recreation...
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PROJECT_DIR%scripts\bootstrap_windows.ps1" -Update
 if errorlevel 1 exit /b 1
-echo Mise a jour terminee. Modeles et configuration conserves.
+echo Mise a jour terminee. Poids et configuration locale conserves ; fichiers Qwen prepares.
 echo Lancez ensuite : start_windows.bat
 exit /b 0
 

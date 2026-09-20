@@ -457,20 +457,24 @@ def test_generator_maps_cfg_and_scales_partial_noise(tmp_path, monkeypatch):
         generator.close()
 
 
-def test_krea_installation_only_downloads_missing_vae(tmp_path, monkeypatch):
+def test_krea_installation_prepares_config_and_only_downloads_missing_vae(tmp_path, monkeypatch):
     import pulid_app.installer as installer
     from rich.console import Console
     path, models = _write_config(tmp_path)
     config = load_config(path).krea2
     downloads = []
+    preparations = []
     def download(root, asset, console):
         downloads.append(asset)
         config.vae.write_bytes(b"vae")
     monkeypatch.setattr(installer, "ensure_huggingface_asset", download)
+    monkeypatch.setattr(installer, "ensure_qwen3vl_configuration",
+                        lambda root, destination, console: preparations.append((root, destination)))
     monkeypatch.setattr(installer, "_matches", lambda path, digest: path.read_bytes() == b"vae")
     installer.prepare_krea2_assets(models, config, Console(quiet=True))
     installer.prepare_krea2_assets(models, config, Console(quiet=True))
     assert downloads == [installer.KREA2_VAE]
+    assert preparations == [(models, config.text_encoder_config_dir)] * 2
     assert config.text_encoder_config_dir.is_dir()
     assert config.checkpoint.parent.is_dir()
     assert not config.checkpoint.exists()

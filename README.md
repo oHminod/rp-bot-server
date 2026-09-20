@@ -187,8 +187,11 @@ dépendances manquantes et met à niveau celles dont la version dans `uv.lock` a
 changé ; les dépendances déjà conformes et les paquets supplémentaires restent
 installés. Le petit paquet applicatif PuLID est réinstallé pour actualiser aussi
 le code en profil production. La DLL CPU portable déjà conforme est réutilisée.
-Ce mode ne lance ni la préparation des modèles, ni les tests de génération/BGE,
-ni la configuration réseau. Il ne modifie pas `config/local.yaml`.
+Ce mode prépare aussi les petits fichiers partagés de configuration/tokenizer
+Qwen3-VL pour Krea : il télécharge ceux qui manquent ou répare ceux dont l'empreinte
+est incorrecte. Les fichiers conformes sont réutilisés sans accès réseau.
+Il ne télécharge aucun poids de modèle, ne lance ni les tests de génération/BGE,
+ni la configuration réseau, et ne modifie pas `config/local.yaml`.
 
 Python et uv doivent déjà correspondre aux versions requises. Un environnement
 absent ou incompatible provoque un arrêt explicite, sans recréation automatique ;
@@ -623,17 +626,38 @@ PuLID_models/
 │   └── krea2.safetensors                   # fourni manuellement
 ├── text_encoders/qwen3vl/
 │   ├── qwen3vl_4b_bf16.safetensors         # fourni manuellement
-│   └── config/                            # fourni manuellement
+│   └── config/                            # préparé automatiquement, partagé
 │       ├── config.json
 │       ├── tokenizer.json
-│       └── tokenizer_config.json
+│       ├── tokenizer_config.json
+│       ├── vocab.json
+│       ├── merges.txt
+│       └── chat_template.json
 └── vae/
     └── qwen_image_vae.safetensors          # téléchargé uniquement si absent
 ```
 
-Les fichiers de `config/` doivent provenir de
-[Qwen/Qwen3-VL-4B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct/tree/main).
-Conservez également les éventuels fichiers annexes du tokenizer.
+Les six fichiers de `config/` sont téléchargés automatiquement depuis
+[Qwen/Qwen3-VL-4B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct/tree/ebb281ec70b05090aa6165b016eac8ec08e71b17)
+à une révision épinglée, avec vérification SHA-256, pendant l'installation
+complète, `pulid-install --krea2-only` et `install_windows.bat --update`.
+Ce dossier est partagé par tous les encodeurs **Qwen3-VL-4B compatibles**,
+quelle que soit leur quantification prise en charge ou leur nom de fichier.
+Il suffit de déposer vos poids dans `text_encoders/qwen3vl/` : aucune copie
+manuelle de configuration n'est nécessaire. Cela ne rend pas les variantes
+Qwen d'autres architectures ou tailles compatibles avec Krea.
+
+Seuls les fichiers manquants ou dont l'empreinte est incorrecte sont téléchargés
+ou remplacés ; une configuration complète et conforme ne nécessite aucune
+requête réseau. Le chemin `krea2.text_encoder_config_dir` et sa surcharge
+d'environnement sont respectés. Pour préparer uniquement ces fichiers sur une
+installation existante, sans toucher au YAML, au VAE ni aux dépendances :
+
+```powershell
+.\.venv\Scripts\python.exe -m pulid_app.installer --qwen3vl-config-only
+```
+
+Sur macOS : `.venv/bin/python -m pulid_app.installer --qwen3vl-config-only`.
 Le checkpoint Krea et les poids Qwen3-VL ne sont **jamais téléchargés automatiquement**.
 Le VAE est téléchargé depuis
 [Comfy-Org/Qwen-Image_ComfyUI](https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/blob/main/split_files/vae/qwen_image_vae.safetensors),

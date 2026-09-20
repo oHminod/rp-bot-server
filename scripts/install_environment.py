@@ -205,6 +205,12 @@ def install(root: Path, models_root: Path, uv: Path, profile: str | None = None,
     (venv / "pulid-runtime.json").write_text(json.dumps(state, indent=2) + "\n")
     subprocess.run([str(python), "-I", str(root / "scripts/check_environment.py"), "--prepare"],
                    cwd=root, env=environment, check=True)
+    if update:
+        # Le paquet vient d'être actualisé, y compris en profil production.
+        # Cette préparation ne télécharge aucun poids et ne réécrit aucun YAML.
+        subprocess.run([str(venv_python), "-I", "-m", "pulid_app.installer",
+                        "--models-root", str(models_root), "--qwen3vl-config-only"],
+                       cwd=root, env=environment, check=True)
     print(f"Environnement vérifié : {venv_python}\nPython géré : {python}\nuv : {expected_uv}")
 
 

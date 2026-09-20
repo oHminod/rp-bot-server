@@ -837,6 +837,14 @@ les erreurs de validation FastAPI utilisent une liste dans `detail`.
 Les messages de modèles absents/incompatibles indiquent les chemins à corriger.
 Aucun téléchargement n'est effectué pendant une requête HTTP.
 
+La configuration/tokenizer de `text_encoders/qwen3vl/config/` est commune aux
+encodeurs Qwen3-VL-4B compatibles. Elle est préparée automatiquement à
+l'installation et par `install_windows.bat --update`, depuis une révision
+officielle épinglée avec vérification SHA-256. `pulid-install --qwen3vl-config-only`
+permet de compléter/réparer uniquement ces fichiers. Le client HTTP n'a pas à
+fournir de configuration par encodeur ; seuls les poids Krea et Qwen restent
+à installer manuellement. Aucun changement du contrat de sélection des modèles.
+
 Le chargement accepte aussi les poids NVFP4 Comfy et FP8 E4M3 scaled déclarés
 dans leurs métadonnées. Ils restent compactés en mémoire : déquantification
 temporaire par couche, ou calcul FP8 natif sur CUDA compatible. Le serveur

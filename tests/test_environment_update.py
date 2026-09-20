@@ -66,7 +66,9 @@ def test_update_preserves_venv_and_profile_without_removing_runtime_packages(ins
     updated = json.loads(state_path.read_text())
     assert updated['profile'] == profile
     assert updated['lock_sha256'] == hashlib.sha256((root / 'uv.lock').read_bytes()).hexdigest()
-    assert calls[-1][-1] == '--prepare'
+    assert calls[-2][-1] == '--prepare'
+    assert calls[-1] == [str(root / '.venv/bin/python'), '-I', '-m', 'pulid_app.installer',
+                         '--models-root', str(root / 'models'), '--qwen3vl-config-only']
 
 
 @pytest.mark.parametrize('failure', ['missing_marker', 'bad_marker', 'python_pin', 'managed_path', 'project_path', 'profile', 'actual_python', 'actual_prefix', 'actual_base'])
@@ -99,6 +101,19 @@ def test_failed_sync_does_not_mark_new_lock_as_installed(installation, monkeypat
     with pytest.raises(subprocess.CalledProcessError):
         install_environment.install(root, root / 'models', root / 'uv', update=True)
     assert state_path.read_bytes() == before
+
+
+def test_qwen_configuration_failure_is_not_reported_as_successful_update(installation, monkeypatch):
+    root, _, _, calls = installation
+    def run(command, **kwargs):
+        calls.append(command)
+        if '--qwen3vl-config-only' in command:
+            raise subprocess.CalledProcessError(1, command)
+    monkeypatch.setattr(install_environment.subprocess, 'run', run)
+    with pytest.raises(subprocess.CalledProcessError):
+        install_environment.install(root, root / 'models', root / 'uv', update=True)
+    assert (root / '.venv/keep.txt').read_text() == 'existing package'
+    assert not any('--clear' in command for command in calls)
 
 
 def test_update_rejects_profile_override(installation):
