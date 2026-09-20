@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 
 def benchmark_attention(torch, device, runs: int) -> dict:
-    """Dimensions de la diffusion 1248×832 avec la fenêtre texte du pipeline."""
+    """Charge maximale 1248×832 au plafond texte ; les prompts courts coûtent moins."""
     from pulid_app.models.krea2_attention import krea2_sdpa
     from pulid_app.pipeline.krea2 import KREA2_TEXT_SEQUENCE_LENGTH
 

@@ -434,6 +434,11 @@ def test_generator_maps_cfg_and_scales_partial_noise(tmp_path, monkeypatch):
     import torch
     calls = []
     class Pipeline:
+        prompt_template_encode_prefix = "system "
+        prompt_template_encode_start_idx = 1
+        prompt_template_encode_num_suffix_tokens = 5
+        def tokenizer(self, text, **kwargs):
+            return {"input_ids": list(range(min(len(text.split()), kwargs["max_length"])))}
         def prepare_latents(self, *args):
             return torch.ones((1, 4, 64))
         def __call__(self, **kwargs):
@@ -452,7 +457,9 @@ def test_generator_maps_cfg_and_scales_partial_noise(tmp_path, monkeypatch):
         assert calls[0]["sigmas"] == beta_sigmas(10, .5)
         assert torch.allclose(calls[0]["latents"], torch.full((1, 4, 64), shifted_sigma(beta_sigmas(10, .5)[0])))
         assert calls[0]["negative_prompt"] == ""
-        assert calls[0]["max_sequence_length"] == 1024
+        assert calls[0]["max_sequence_length"] == 6  # photo + suffixe de 5 tokens
+        generator.generate(Krea2Parameters("mot " * 600, width=64, height=64, seed=42))
+        assert calls[1]["max_sequence_length"] == 605  # Recalcul sur le pipeline déjà chargé.
     finally:
         generator.close()
 

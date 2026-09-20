@@ -10,7 +10,7 @@ from typing import Any
 
 from pulid_app.config import AppConfig
 from pulid_app.exceptions import GenerationError, ModelNotFoundError, UnsupportedDeviceError
-from pulid_app.models.krea2 import load_krea2_pipeline
+from pulid_app.models.krea2 import load_krea2_pipeline, prompt_sequence_length
 from pulid_app.paths import configure_external_model_caches
 from pulid_app.pipeline.memory import MemoryManager
 
@@ -179,6 +179,10 @@ class Krea2Generator:
         torch = self._torch
         sigmas = beta_sigmas(parameters.steps, parameters.denoise)
         try:
+            prompt = parameters.prompt.strip()
+            text_length = prompt_sequence_length(pipeline, prompt, KREA2_TEXT_SEQUENCE_LENGTH)
+            logger.info("Krea 2 : conditionnement texte %d tokens (plafond %d, suffixe inclus).",
+                        text_length, KREA2_TEXT_SEQUENCE_LENGTH)
             if reused and self.keep_loaded:
                 pipeline.prepare_for_next_generation()
             with torch.inference_mode(), generation_progress(pipeline, torch, self.device, len(sigmas)) as progress:
@@ -190,11 +194,11 @@ class Krea2Generator:
                 )
                 latents *= shifted_sigma(sigmas[0])
                 result = pipeline(
-                    prompt=parameters.prompt.strip(), negative_prompt="",
+                    prompt=prompt, negative_prompt="",
                     width=parameters.width, height=parameters.height,
                     num_inference_steps=len(sigmas), sigmas=sigmas,
                     guidance_scale=parameters.cfg - 1, generator=generator,
-                    latents=latents, max_sequence_length=KREA2_TEXT_SEQUENCE_LENGTH,
+                    latents=latents, max_sequence_length=text_length,
                     callback_on_step_end=progress,
                 )
             logger.info("Krea 2 : image terminée en %.2f s (chargement inclus).", perf_counter() - started)

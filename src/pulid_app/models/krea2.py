@@ -186,6 +186,24 @@ def configure_krea2_memory(pipeline: Any, *, device: str, offload: str, dtype: A
         pipeline.enable_model_cpu_offload(device=device)
 
 
+def prompt_sequence_length(pipeline: Any, prompt: str, maximum: int) -> int:
+    """Compte les tokens utiles avec le même préfixe et la même troncature que Diffusers.
+
+    Le préfixe système est supprimé après Qwen ; le suffixe assistant reste
+    dans le conditionnement. La branche CFG vide partage cette longueur pour
+    conserver les positions communes du pipeline, sans modifier ses masques.
+    """
+    prefix_length = pipeline.prompt_template_encode_start_idx
+    suffix_length = pipeline.prompt_template_encode_num_suffix_tokens
+    tokens = pipeline.tokenizer(
+        pipeline.prompt_template_encode_prefix + prompt,
+        padding=False,
+        truncation=True,
+        max_length=maximum + prefix_length - suffix_length,
+    )["input_ids"]
+    return min(maximum, max(suffix_length, len(tokens) - prefix_length + suffix_length))
+
+
 def workflow_pipeline(**components: Any) -> Any:
     from diffusers import Krea2Pipeline
 

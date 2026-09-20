@@ -770,7 +770,7 @@ complète et ne garantit pas une durée identique à ComfyUI :
 ```
 
 Pour mesurer **l'attention seule** aux dimensions du workflow 1248×832
-(5080 tokens : 4056 image + 1024 texte, 48 têtes Q et 12 têtes K/V), arrêter le serveur puis lancer :
+(cas maximal de 5080 tokens : 4056 image + 1024 texte, 48 têtes Q et 12 têtes K/V), arrêter le serveur puis lancer :
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\benchmark_krea2_cuda.py --attention
@@ -803,12 +803,18 @@ mémorisés séparément. Krea reste accessible même si aucun checkpoint SDXL n
 installé. L'aperçu n'est pas sauvegardé automatiquement ; le bouton de
 téléchargement reste disponible.
 
-Krea utilise une fenêtre de **1024 tokens** (environ 1019 pour le texte et 5 pour
+Krea utilise un plafond de **1024 tokens** (environ 1019 pour le texte et 5 pour
 le suffixe), avec une limite de **8000 caractères** dans l'API et le frontend.
 Les tokens au-delà de 512 participent à la génération ; le dépassement de la
-fenêtre de 1024 reste tronqué automatiquement. Cette extension augmente le coût
-de calcul et de mémoire ; sa qualité avec les poids réels reste à vérifier sur
-le GPU. SDXL conserve ses propres limites.
+fenêtre de 1024 reste tronqué automatiquement. La longueur est calculée pour
+chaque prompt : un texte de 100 tokens produit 105 positions de conditionnement,
+sans remplissage jusqu'à 1024. Qwen et la diffusion traitent cette longueur réduite ;
+le préfixe système, le suffixe assistant et les tokens utiles sont conservés.
+Le terminal affiche la longueur effective. Avec CFG différent de 1, la branche
+négative vide est remplie à cette même longueur pour garder les positions alignées.
+Les prompts longs demandent davantage de calcul et de mémoire. SDXL conserve
+ses propres limites. Le benchmark d'attention ci-dessus reste un test au plafond
+de 1024 positions, pas une mesure représentative de tous les prompts.
 
 L'API renvoie le PNG directement en mémoire, sans écrire dans `outputs/` ni créer
 de JSON/cache d'identité. **rp-bot conserve les images reçues**, comme avec SDXL.

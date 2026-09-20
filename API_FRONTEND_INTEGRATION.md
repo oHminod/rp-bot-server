@@ -798,10 +798,14 @@ dans `capabilities.krea2_generation.catalog_endpoint` de `GET /capabilities`.
 Les champs supplémentaires sont refusés, notamment `reference`, `character`,
 `strength` et `negative_prompt`. La sélection ne modifie pas la configuration
 globale. Le conditionnement négatif est vide, comme dans le workflow.
-Le tokenizer utilise une fenêtre de 1024 tokens, soit environ 1019 tokens utiles
+Le tokenizer utilise un plafond de 1024 tokens, soit environ 1019 tokens utiles
 pour le prompt et 5 tokens de suffixe. Les tokens supplémentaires sont transmis
 au modèle de diffusion ; le texte au-delà de cette fenêtre reste tronqué.
-Cette fenêtre est fixée côté serveur et n'est pas un paramètre HTTP. La limite
+La longueur de calcul s'adapte au prompt sans remplissage systématique jusqu'au
+plafond : seuls les tokens utiles et le suffixe sont transmis au conditionnement.
+Si CFG nécessite la branche négative vide, celle-ci utilise la même longueur
+et ses positions de remplissage restent masquées. Aucun token utile n'est retiré
+à l'intérieur du budget. Ce plafond est fixé côté serveur et n'est pas un paramètre HTTP. La limite
 de 8000 caractères est indépendante du budget de tokens. Le frontend adapte son
 compteur au moteur sélectionné ; SDXL conserve sa limite de 4000 caractères.
 Aucun encodage facial, transfert d'identité ou cache d'identité n'est exécuté.
