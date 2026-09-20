@@ -5,6 +5,7 @@ ceux de Diffusers/Transformers ; aucun import ni runtime ComfyUI.
 """
 from __future__ import annotations
 
+from collections import OrderedDict
 from collections.abc import Callable
 import json
 import logging
@@ -157,6 +158,7 @@ def load_safetensors_module(
 def configure_krea2_memory(pipeline: Any, *, device: str, offload: str, dtype: Any) -> None:
     """Garde un composant compacté en VRAM s'il reste une marge pour le calcul."""
     import torch
+    from pulid_app.models.krea2_memory import module_bytes
     from pulid_app.models.quantized import QuantizedLinear
 
     if offload != "model_cpu_offload":
@@ -169,7 +171,7 @@ def configure_krea2_memory(pipeline: Any, *, device: str, offload: str, dtype: A
         pipeline.to(device)
         return
     models = (pipeline.transformer, pipeline.text_encoder, pipeline.vae)
-    resident = max(sum(t.numel() * t.element_size() for t in model.parameters()) for model in models)
+    resident = max(module_bytes(model) for model in models)
     scratch = max((layer.in_features * layer.out_features * torch.empty((), dtype=dtype).element_size()
                    for model in models for layer in model.modules() if isinstance(layer, QuantizedLinear)), default=0)
     free_bytes, _ = torch.cuda.mem_get_info(torch.device(device))
@@ -210,7 +212,32 @@ def workflow_pipeline(**components: Any) -> Any:
     class WorkflowKrea2Pipeline(Krea2Pipeline):
         retain_model_hooks: bool = False
 
+        def get_text_hidden_states(self, prompt: str | list[str], max_sequence_length: int = 512,
+                                   device: Any = None) -> Any:
+            if not self.retain_model_hooks:
+                return super().get_text_hidden_states(prompt, max_sequence_length, device)
+            # Deux encodages CPU au plus : le prompt courant et la branche CFG
+            # vide. Évite de rappeler Qwen (et d'évincer Krea sur 12 Go) quand
+            # seuls la seed, la résolution ou les paramètres de diffusion changent.
+            cache = getattr(self, "_krea2_prompt_cache", None)
+            if cache is None:
+                cache = self._krea2_prompt_cache = OrderedDict()
+            key = ((prompt,) if isinstance(prompt, str) else tuple(prompt), max_sequence_length)
+            if key in cache:
+                cache.move_to_end(key)
+                logging.getLogger("uvicorn.error").info("Krea 2 : encodage Qwen réutilisé depuis la RAM.")
+                return tuple(t.to(device or self._execution_device) for t in cache[key])
+            result = super().get_text_hidden_states(prompt, max_sequence_length, device)
+            cache[key] = tuple(t.detach().to("cpu", copy=True) for t in result)
+            while len(cache) > 2:
+                cache.popitem(last=False)
+            return result
+
         def prepare_for_next_generation(self) -> None:
+            residency = getattr(self, "_krea2_residency", None)
+            if residency is not None:
+                residency.begin_generation()
+                return
             # La chaîne Accelerate n'est pas circulaire : libérer le dernier
             # composant (VAE) avant que Qwen ne revienne sur le GPU.
             if self.retain_model_hooks:
@@ -226,6 +253,9 @@ def workflow_pipeline(**components: Any) -> Any:
             for component in self.components.values():
                 if hasattr(component, "_reset_stateful_cache"):
                     component._reset_stateful_cache()
+            residency = getattr(self, "_krea2_residency", None)
+            if residency is not None:
+                residency.log_resident()
 
         @property
         def do_classifier_free_guidance(self) -> bool:

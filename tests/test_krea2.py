@@ -587,9 +587,16 @@ def test_real_diffusers_components_generate_with_tiny_random_weights(tmp_path, m
     resets = []
     if retain_device:
         # CPU exerce les vrais hooks Accelerate en CI, CUDA vérifie en plus
-        # la résidence effective du VAE et son éviction avant le prochain Qwen.
+        # la résidence effective du débruiteur avec le VAE entre les requêtes.
+        from pulid_app.models.krea2_memory import retain_krea2_components
         pipe.enable_model_cpu_offload(device=retain_device)
         pipe.retain_model_hooks = True
+        if retain_device == "cpu":
+            pipe._offload_device = torch.device("cpu")
+            monkeypatch.setattr(torch.cuda, "mem_get_info", lambda device: (16 * 1024**3, 16 * 1024**3))
+            monkeypatch.setattr(torch.cuda, "memory_reserved", lambda device: 0)
+            monkeypatch.setattr(torch.cuda, "memory_allocated", lambda device: 0)
+        retain_krea2_components(pipe, dtype=dtype)
         hooks = tuple(pipe._all_hooks)
         def unexpected_reset(*args, **kwargs):
             pytest.fail("L'offload ne doit pas être réinstallé après chaque image")
@@ -602,7 +609,8 @@ def test_real_diffusers_components_generate_with_tiny_random_weights(tmp_path, m
             for iteration in range(2 if retain_device else 1):
                 if iteration:
                     pipe.prepare_for_next_generation()
-                    assert all(p.device.type == "cpu" for p in vae.parameters())
+                    assert all(p.device.type == retain_device for p in vae.parameters())
+                    assert all(p.device.type == retain_device for p in transformer.parameters())
                 result = pipe(prompt_embeds=embeds, prompt_embeds_mask=mask,
                     negative_prompt_embeds=torch.zeros_like(embeds), negative_prompt_embeds_mask=mask,
                     width=64, height=64, num_inference_steps=2, sigmas=beta_sigmas(2, 1), guidance_scale=cfg-1,
@@ -614,6 +622,7 @@ def test_real_diffusers_components_generate_with_tiny_random_weights(tmp_path, m
                     assert tuple(pipe._all_hooks) == hooks
                     assert len(resets) == iteration + 1
                     assert next(vae.parameters()).device.type == retain_device
+                    assert next(transformer.parameters()).device.type == retain_device
                     if iteration:
                         torch.testing.assert_close(torch.from_numpy(result.images), first)
                     first = torch.from_numpy(result.images).clone()

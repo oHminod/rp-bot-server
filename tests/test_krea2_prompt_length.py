@@ -52,6 +52,60 @@ def test_effective_length_counts_suffix_and_preserves_1024_ceiling(pipeline, tok
     assert prompt_sequence_length(pipeline, "word " * tokens, KREA2_TEXT_SEQUENCE_LENGTH) == min(tokens + 5, 1024)
 
 
+def test_prompt_cache_preserves_outputs_masks_and_skips_qwen(pipeline):
+    import torch
+    pipeline.retain_model_hooks = True
+    calls = []
+    handle = pipeline.text_encoder.register_forward_hook(lambda *args: calls.append(True))
+    try:
+        with torch.inference_mode():
+            expected = [pipeline.get_text_hidden_states(prompt, 8) for prompt in ("word word word", "")]
+            pipeline.prepare_for_next_generation()
+            for prompt, original in zip(("word word word", ""), expected):
+                actual = pipeline.get_text_hidden_states(prompt, 8)
+                for before, after in zip(original, actual):
+                    torch.testing.assert_close(before, after, rtol=0, atol=0)
+            assert len(calls) == 2
+            assert all(t.device.type == "cpu" for entry in pipeline._krea2_prompt_cache.values() for t in entry)
+            # La longueur fait partie de la clé, même pour la branche vide CFG.
+            pipeline.get_text_hidden_states("", 9)
+            assert len(calls) == 3
+            pipeline.get_text_hidden_states("new prompt", 9)
+            assert len(pipeline._krea2_prompt_cache) == 2
+            pipeline.get_text_hidden_states("word word word", 8)
+            assert len(calls) == 5  # L'ancien prompt a été évincé du cache borné.
+    finally:
+        handle.remove()
+
+
+def test_prompt_cache_disabled_when_pipeline_is_not_retained(pipeline):
+    import torch
+    with torch.inference_mode():
+        pipeline.get_text_hidden_states("word", 6)
+    assert not hasattr(pipeline, "_krea2_prompt_cache")
+
+
+@pytest.mark.parametrize("cfg", [1, 2])
+def test_cached_prompt_generation_matches_uncached_diffusion(pipeline, cfg):
+    import torch
+    kwargs = dict(prompt="word word word", negative_prompt="", width=64, height=64,
+                  max_sequence_length=8, num_inference_steps=2, sigmas=beta_sigmas(2, 1),
+                  guidance_scale=cfg - 1, output_type="latent")
+    calls = []
+    handle = pipeline.text_encoder.register_forward_hook(lambda *args: calls.append(True))
+    try:
+        with torch.inference_mode():
+            expected = pipeline(**kwargs, generator=torch.Generator().manual_seed(7)).images
+            pipeline.retain_model_hooks = True
+            for iteration in range(2):
+                pipeline.prepare_for_next_generation()
+                actual = pipeline(**kwargs, generator=torch.Generator().manual_seed(7)).images
+                torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+                assert len(calls) == (2 if cfg == 1 else 4)
+    finally:
+        handle.remove()
+
+
 @pytest.mark.parametrize("tokens", [0, 7, 600, 1300])
 def test_short_encoding_preserves_valid_ids_positions_suffix_and_qwen_features(pipeline, tokens):
     import torch

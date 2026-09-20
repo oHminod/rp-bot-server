@@ -878,10 +878,17 @@ déchargés avant Krea. Sur CUDA, le pipeline Krea est conservé après succès 
 réutilisé pour les requêtes suivantes, y compris lorsque les paramètres de
 génération changent. Changer le checkpoint ou l'encodeur libère le pipeline
 précédent avant de charger la nouvelle paire de modèles.
-En offload par composant, les poids restent en RAM et le dernier composant actif
-(VAE) reste en VRAM entre les requêtes. Le cache CUDA n'est pas vidé après chaque
-image ; le VAE est offloadé au début de la requête suivante, avant Qwen.
-Cela n'implique pas de conserver Qwen, Krea et le VAE simultanément en VRAM.
+En offload par composant, les composants restent en VRAM tant que la mémoire
+disponible couvre la marge de calcul estimée. Krea est conservé avec le VAE si
+la place le permet ; le serveur ne déplace les poids sur CPU que pour faire
+place à un composant demandé. Il ne vide pas systématiquement la VRAM après
+l'image, ni avant la suivante. Le terminal indique les composants conservés.
+Deux encodages texte au maximum sont mis en cache en RAM, par prompt et longueur
+de conditionnement : répéter le même prompt peut éviter l'encodage Qwen et les
+transferts de poids, même si la seed ou la résolution change. Le cache appartient
+à la paire de modèles chargée, sans persistance sur disque. Un nouveau prompt
+peut nécessiter des transferts sur 12 Go ; l'offload par sous-module reste actif
+si un composant entier ne tient pas avec sa marge de calcul.
 
 Krea est libéré avant le chargement d'un modèle SDXL ou BGE sur GPU, après une
 erreur et à l'arrêt du serveur. L'éviction est sérialisée même si SDXL et BGE

@@ -165,6 +165,9 @@ class Krea2Generator:
         self.dtype = torch.float32 if kind == "cpu" else getattr(torch, self.dtype_name)
         self.pipeline = load_krea2_pipeline(self.config.krea2, device=self.device, dtype=self.dtype, offload=self.offload)
         self.pipeline.retain_model_hooks = self.keep_loaded and kind == "cuda"
+        if self.pipeline.retain_model_hooks:
+            from pulid_app.models.krea2_memory import retain_krea2_components
+            retain_krea2_components(self.pipeline, dtype=self.dtype)
         return self.pipeline
 
     def generate(self, parameters: Krea2Parameters) -> tuple[Any, dict[str, Any]]:

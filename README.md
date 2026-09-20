@@ -741,11 +741,22 @@ temporaire par couche (CPU en float32).
 Sur CUDA, le serveur conserve le pipeline après une génération réussie et le
 réutilise pour les requêtes Krea suivantes, même si le prompt, la seed ou la
 résolution changent. Il ne relit pas les poids et ne vide pas systématiquement
-le cache CUDA. Avec l'offload par composant, le dernier composant actif (le VAE)
-reste en VRAM entre les requêtes ; Qwen et le modèle de diffusion restent en RAM.
-Le VAE est déplacé sur CPU au début de la requête suivante, avant l'encodage Qwen.
-Les transferts entre composants pendant la génération restent nécessaires sur
-12 Go : tous les poids ne sont pas conservés simultanément en VRAM.
+le cache CUDA. Avec l'offload par composant, les composants restent en VRAM
+tant que leur coexistence laisse la marge de calcul estimée. Krea peut ainsi
+rester sur le GPU pendant et après le décodage VAE. Avant d'utiliser un autre
+composant, le serveur vérifie la mémoire libre et ne déplace des poids sur CPU
+que si nécessaire, en privilégiant la conservation du débruiteur. Aucun
+déchargement systématique n'a lieu au début ou à la fin de chaque image.
+Le terminal indique les composants conservés en VRAM et les évictions.
+
+Deux encodages texte au maximum sont gardés en RAM (prompt et branche CFG vide),
+sans fichier sur disque. Relancer le même prompt avec une autre seed, résolution
+ou nombre de steps évite ainsi de rappeler Qwen et, si Krea et le VAE tiennent
+ensemble, de retransférer leurs poids. La longueur du conditionnement fait
+partie de la clé du cache ; changer de checkpoint ou d'encodeur le réinitialise.
+Sur 12 Go, un nouveau prompt peut toujours nécessiter d'évincer Krea pour charger
+Qwen. Les très gros modèles utilisent encore l'offload par sous-module et ne
+restent donc pas intégralement en VRAM. Aucune réinstallation n'est nécessaire.
 
 Krea est libéré avant une génération SDXL ou un embedding BGE sur GPU, après
 une erreur, et à l'arrêt du serveur. Un embedding BGE sur CPU ou une requête
