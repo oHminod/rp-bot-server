@@ -827,9 +827,13 @@ def prepare_krea2_assets(models_root: Path, config: Krea2Config, console: Consol
 
         asset = replace(KREA2_VAE, relative_path=config.vae.relative_to(models_root).as_posix())
         ensure_huggingface_asset(models_root, asset, console)
+    from pulid_app.models.krea2_catalog import checkpoint_files
+
     for label, path in (("Checkpoint Krea 2", config.checkpoint), ("Encodeur qwen3vl", config.text_encoder)):
-        state = "présent" if path.is_file() else "à fournir manuellement (BF16/FP16/FP32, NVFP4 Comfy ou FP8 E4M3 scaled)"
-        console.print(f"{label} : {state} — {path}")
+        available = checkpoint_files(path)
+        state = f"{len(available)} fichier(s) détecté(s)" if available else "à fournir manuellement (BF16/FP16/FP32, NVFP4 Comfy ou FP8 E4M3 scaled)"
+        console.print(f"{label} : {state} — défaut configuré : {path}")
+        console.print(f"Tout nom .safetensors est accepté dans {path.parent} ; sélection via GET /models/krea2 ou le frontend.")
     console.print(f"Config/tokenizer Qwen3-VL-4B-Instruct à fournir manuellement : {config.text_encoder_config_dir}")
 
 

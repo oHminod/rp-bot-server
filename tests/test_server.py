@@ -228,6 +228,7 @@ def test_discovery_endpoints_are_lightweight_and_versioned(tmp_path: Path) -> No
             "krea2_generation": {
                 "enabled": True,
                 "generation_endpoint": "/generate/krea2",
+                "catalog_endpoint": "/models/krea2",
                 "identity_transfer": False,
                 "samplers": ["euler"],
                 "schedulers": ["beta"],

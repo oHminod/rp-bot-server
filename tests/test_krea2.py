@@ -20,6 +20,13 @@ from pulid_app.paths import configure_external_model_caches
 from pulid_app.pipeline.krea2 import Krea2Generator, Krea2Parameters, beta_sigmas, shifted_sigma
 from pulid_app.server import create_app
 from test_server import _write_config, _request, _generate_request, _image_bytes, FakeEmbeddingModel, FakeMemoryGenerator
+from test_krea2_catalog import write_model
+
+
+def _fake_krea_weights(config_path):
+    config = load_config(config_path).krea2
+    write_model(config.checkpoint)
+    write_model(config.text_encoder)
 
 
 class FakeKreaGenerator:
@@ -48,6 +55,7 @@ class FakeKreaGenerator:
 @pytest.fixture
 def app(tmp_path):
     config, _ = _write_config(tmp_path)
+    _fake_krea_weights(config)
     FakeKreaGenerator.instances.clear()
     FakeKreaGenerator.failure = None
     FakeMemoryGenerator.instances.clear()
@@ -107,6 +115,64 @@ def test_cuda_krea_failure_evicts_pipeline_and_allows_retry(cuda_app):
     assert _request(cuda_app, "POST", "/generate/krea2", data={"prompt": "photo"}).status_code == 200
     assert len(FakeKreaGenerator.instances) == 2
     assert not FakeKreaGenerator.instances[-1].closed
+
+
+def test_krea_catalog_selection_and_cuda_switching(cuda_app, tmp_path):
+    from urllib.parse import unquote
+    service = cuda_app.state.krea2_service
+    original_config = service.config.krea2
+    original_config.checkpoint.unlink()
+    original_config.text_encoder.unlink()
+    checkpoints = [write_model(original_config.checkpoint.parent / name) for name in
+                   ("mon modèle FP8.safetensors", "autre.SAFETENSORS")]
+    encoders = [write_model(original_config.text_encoder.parent / name) for name in
+                ("Qwen personnalisé.safetensors", "Qwen NVFP4.safetensors")]
+    before = sorted(tmp_path.rglob("*"))
+    catalog = _request(cuda_app, "GET", "/models/krea2")
+    assert catalog.status_code == 200 and catalog.headers["cache-control"] == "no-store"
+    assert {item["name"] for item in catalog.json()["models"]} == {path.name for path in checkpoints}
+    assert {item["name"] for item in catalog.json()["text_encoders"]} == {path.name for path in encoders}
+    assert not FakeKreaGenerator.instances
+    for index, (checkpoint, encoder) in enumerate([
+        (checkpoints[0], encoders[0]), (checkpoints[0], encoders[0]),
+        (checkpoints[1], encoders[0]), (checkpoints[1], encoders[1]),
+    ]):
+        response = _request(cuda_app, "POST", "/generate/krea2", data={
+            "prompt": "image", "width": 64, "height": 64,
+            "model": checkpoint.name, "text_encoder": encoder.name})
+        assert response.status_code == 200, response.text
+        assert response.headers["x-generation-model"] == "krea2"
+        assert unquote(response.headers["x-krea2-model"]) == checkpoint.name
+        assert unquote(response.headers["x-krea2-text-encoder"]) == encoder.name
+        assert len(FakeKreaGenerator.instances) == [1, 1, 2, 3][index]
+        active = FakeKreaGenerator.instances[-1]
+        assert active.config.krea2.checkpoint == checkpoint
+        assert active.config.krea2.text_encoder == encoder
+        assert active.config.krea2.text_encoder_config_dir == original_config.text_encoder_config_dir
+        assert all(instance.closed for instance in FakeKreaGenerator.instances[:-1])
+        assert not active.closed
+    for field in ("model", "text_encoder"):
+        response = _request(cuda_app, "POST", "/generate/krea2",
+                            data={"prompt": "image", field: "missing.safetensors"})
+        assert response.status_code == 422
+        assert not active.closed
+    assert service.config.krea2 == original_config
+    assert sorted(tmp_path.rglob("*")) == before
+
+
+def test_krea_default_uses_catalog_without_renaming_and_headers_support_cors(app):
+    config = app.state.krea2_service.config.krea2
+    config.checkpoint.unlink()
+    config.text_encoder.unlink()
+    checkpoint = write_model(config.checkpoint.parent / "Turbo FP8.safetensors")
+    encoder = write_model(config.text_encoder.parent / "Qwen FP8.safetensors")
+    response = _request(app, "POST", "/generate/krea2", data={"prompt": "image"},
+                        headers={"Origin": "http://rp-bot.local"})
+    assert response.status_code == 200
+    assert FakeKreaGenerator.instances[-1].config.krea2.checkpoint == checkpoint
+    assert FakeKreaGenerator.instances[-1].config.krea2.text_encoder == encoder
+    assert "X-Krea2-Model" in response.headers["access-control-expose-headers"]
+    assert "X-Krea2-Text-Encoder" in response.headers["access-control-expose-headers"]
 
 
 def test_cuda_krea_closed_on_server_shutdown(cuda_app):
@@ -459,6 +525,7 @@ def test_krea_waits_for_bge_even_in_concurrent_cuda_mode(tmp_path):
             return super().generate(parameters)
     app = create_app(path, device="cuda", embedding_model_factory=SlowEmbedding,
                      generator_factory=FakeMemoryGenerator, krea2_generator_factory=CheckedKrea)
+    _fake_krea_weights(path)
     async def run():
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
             embed = asyncio.create_task(client.post("/v1/embeddings", json={"model": "text-embedding-bge-m3", "input": "hello"}))

@@ -646,8 +646,23 @@ et **FP8 E4M3 scaled Comfy**. Les clés peuvent être natives Krea 2 ou Diffuser
 l'encodeur Qwen3-VL-4B doit être un fichier unique avec les clés de sa branche
 texte HF ou ComfyUI. Le VAE reste en BF16/FP16/FP32.
 
-Le format est identifié par le contenu, indépendamment du nom du fichier :
-le nom par défaut `qwen3vl_4b_bf16.safetensors` accepte aussi un encodeur FP8.
+Les noms ci-dessus sont des exemples et des préférences de configuration :
+**aucun renommage n'est nécessaire**. Placez vos checkpoints `.safetensors`
+directement dans `krea2/checkpoints/` et vos encodeurs dans
+`text_encoders/qwen3vl/`, avec leurs noms d'origine. Les extensions en majuscules,
+les espaces et les accents sont acceptés. `config/` reste le dossier partagé
+de configuration/tokenizer Qwen3-VL-4B-Instruct.
+
+`GET /models/krea2` expose deux listes `models` et `text_encoders`, avec le nom
+complet de chaque fichier et un indicateur `default`. Le fichier configuré est
+prioritaire s'il existe ; sinon le premier fichier dans l'ordre alphabétique
+insensible à la casse sert de défaut. L'inventaire est actualisé à chaque appel,
+sans téléchargement ni lecture des poids. Les sous-dossiers ne sont pas parcourus.
+Pour rp-bot, envoyer les noms choisis dans les champs `model` et `text_encoder`
+de `POST /generate/krea2` ; voir [le contrat API](API_FRONTEND_INTEGRATION.md#génération-krea-v2-sans-identité).
+
+Le format est identifié par le contenu, indépendamment du nom du fichier.
+Les architectures et formats compatibles restent ceux décrits ci-dessus.
 Les déclarations `_quantization_metadata` version 1.0 et les marqueurs
 `comfy_quant` sont reconnus, y compris lorsque seul le nom des poids porte
 le préfixe `model.diffusion_model.`. Une échelle absente, des dimensions
@@ -754,7 +769,11 @@ Une ancienne configuration sans section `krea2` reçoit ces chemins par défaut.
 
 Dans le **frontend léger**, sélectionnez « Krea v2 · texte vers image » dans
 « Moteur de génération ». Le portrait, le personnage et les contrôles d'identité
-disparaissent. Entrez le prompt puis générez : valeurs initiales 1248 × 832,
+disparaissent. Choisissez « Modèle Krea v2 » et « Encodeur Qwen3-VL » dans les
+réglages avancés ; le bouton de reconnexion actualise les listes après l'ajout
+de fichiers. Les sélections sont mémorisées séparément de SDXL. Sur CUDA, la même
+paire réutilise le pipeline ; changer l'un des deux fichiers le recharge.
+Entrez le prompt puis générez : valeurs initiales 1248 × 832,
 10 steps, CFG 1, Euler, Beta, denoise 1. Les réglages de chaque moteur sont
 mémorisés séparément. Krea reste accessible même si aucun checkpoint SDXL n'est
 installé. L'aperçu n'est pas sauvegardé automatiquement ; le bouton de

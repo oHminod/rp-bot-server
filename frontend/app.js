@@ -43,6 +43,8 @@ const elements = {
   negativePromptField: document.querySelector("#negativePromptField"),
   negativeCount: document.querySelector("#negativeCount"),
   model: document.querySelector("#model"),
+  modelLabel: document.querySelector("#modelLabel"),
+  textEncoder: document.querySelector("#textEncoder"),
   method: document.querySelector("#method"),
   sigmas: document.querySelector("#sigmas"),
   clipSkip2: document.querySelector("#clipSkip2"),
@@ -205,6 +207,7 @@ function collectSettings() {
     negativePrompt: elements.negativePrompt.value,
     clipSkip2: elements.clipSkip2.checked,
     model: elements.model.value,
+    textEncoder: elements.textEncoder.value,
     cfg: elements.cfg.value,
     steps: elements.steps.value,
     strength: elements.strength.value,
@@ -260,7 +263,8 @@ function applySettings(settings) {
 function engineValues() {
   return { cfg: elements.cfg.value, steps: elements.steps.value,
     resolution: elements.resolution.value, denoise: elements.denoise.value,
-    model: elements.model.value, method: elements.method.value, sigmas: elements.sigmas.value };
+    model: elements.model.value, textEncoder: elements.textEncoder.value,
+    method: elements.method.value, sigmas: elements.sigmas.value };
 }
 
 function updateEngineFields() {
@@ -273,7 +277,9 @@ function updateEngineFields() {
       group.querySelectorAll("input, select, textarea, button").forEach((input) => { input.disabled = hidden; });
     });
   }
-  elements.model.disabled = krea || !state.inventory?.models?.length;
+  elements.modelLabel.textContent = krea ? "Modèle Krea v2" : "Modèle SDXL";
+  elements.model.disabled = !state.ready || !state.inventory?.models?.length;
+  elements.textEncoder.disabled = !krea || !state.ready || !state.inventory?.text_encoders?.length;
   elements.reference.setCustomValidity("");
   elements.engineHint.textContent = krea
     ? "Décrivez votre image. Aucune photo ni identité nécessaire."
@@ -317,23 +323,30 @@ async function loadInventory(preferredSettings = collectSettings()) {
   setConnection("loading", "Connexion au backend…");
   elements.generateButton.disabled = true;
   elements.model.disabled = true;
+  elements.textEncoder.disabled = true;
   elements.method.disabled = true;
   elements.sigmas.disabled = true;
 
   try {
     if (state.engine === "krea2") {
-      const response = await fetch("/api/capabilities", { cache: "no-store" });
+      const response = await fetch("/api/models/krea2", { cache: "no-store" });
       if (!response.ok) throw new Error(`Découverte Krea v2 indisponible (${response.status}).`);
-      const capabilities = await response.json();
+      const inventory = await response.json();
       if (requestId !== state.inventoryRequest) return;
-      if (!capabilities.capabilities?.krea2_generation?.enabled) throw new Error("Ce backend ne propose pas Krea v2. Mettez-le à jour.");
+      if (!Array.isArray(inventory.models) || !inventory.models.length)
+        throw new Error("Aucun checkpoint Krea dans krea2/checkpoints. Ajoutez vos poids puis actualisez.");
+      if (!Array.isArray(inventory.text_encoders) || !inventory.text_encoders.length)
+        throw new Error("Aucun encodeur dans text_encoders/qwen3vl. Ajoutez vos poids puis actualisez.");
+      state.inventory = inventory;
+      fillSelect(elements.model, inventory.models, preferredSettings.model);
+      fillSelect(elements.textEncoder, inventory.text_encoders, preferredSettings.textEncoder);
       fillSelect(elements.method, [{ name: "euler", label: "Euler" }]);
       fillSelect(elements.sigmas, [{ name: "beta", label: "Beta" }]);
       state.ready = true;
       updateEngineFields();
       elements.generateButton.disabled = state.generating;
       persistSettings();
-      setConnection("connected", "Krea v2 disponible");
+      setConnection("connected", `Krea v2 · ${inventory.models.length} checkpoint(s) disponible(s)`);
       return;
     }
     const response = await fetch("/api/models", { cache: "no-store" });
@@ -358,6 +371,7 @@ async function loadInventory(preferredSettings = collectSettings()) {
     if (requestId !== state.inventoryRequest) return;
     state.inventory = null;
     elements.model.replaceChildren(new Option("Backend indisponible", ""));
+    elements.textEncoder.replaceChildren(new Option("Encodeurs indisponibles", ""));
     setConnection("error", "Backend indisponible");
     setError(
       `${error.message} Vérifiez que le backend est lancé sur ${elements.backendUrl.value}.`,
@@ -491,6 +505,7 @@ function buildGenerationBody() {
   if (state.engine === "krea2") {
     const [width, height] = elements.resolution.value.split("x");
     const values = { prompt: elements.prompt.value.trim(), width, height,
+      model: elements.model.value, text_encoder: elements.textEncoder.value,
       seed: elements.seed.value.trim(), steps: elements.steps.value, cfg: elements.cfg.value,
       sampler: elements.method.value, scheduler: elements.sigmas.value, denoise: elements.denoise.value };
     for (const [name, value] of Object.entries(values)) if (value !== "") form.append(name, value);
@@ -564,7 +579,9 @@ function resultFromResponse(response, blob) {
     blob,
     filename: filenameFromResponse(response),
     seed: response.headers.get("X-Generation-Seed") ?? "—",
-    model: response.headers.get("X-Generation-Model") ?? response.headers.get("X-SDXL-Model") ?? elements.model.value,
+    model: response.headers.has("X-Krea2-Model")
+      ? decodeURIComponent(response.headers.get("X-Krea2-Model"))
+      : response.headers.get("X-Generation-Model") ?? response.headers.get("X-SDXL-Model") ?? elements.model.value,
     method: response.headers.get("X-Sampling-Method") ?? elements.method.value,
     sigmas: response.headers.get("X-Sigma-Schedule") ?? elements.sigmas.value,
   };

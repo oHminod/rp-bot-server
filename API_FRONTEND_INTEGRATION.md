@@ -1,16 +1,17 @@
 # API PuLID — intégration frontend
 
-Ce serveur HTTP local expose huit routes applicatives. Trois routes de découverte
+Ce serveur HTTP local expose neuf routes applicatives. Trois routes de découverte
 stables sont prévues pour les lanceurs, installateurs et clients gérés :
 
 - `GET /health` confirme que le processus HTTP répond ;
 - `GET /version` expose la version PuLID et celle du contrat API ;
 - `GET /capabilities` décrit les fonctions et routes disponibles.
 
-Les cinq routes métier sont :
+Les six routes métier sont :
 
 - `GET /models` liste séparément les checkpoints SDXL, les méthodes de sampling
   et les courbes de sigmas compatibles ;
+- `GET /models/krea2` liste les checkpoints Krea v2 et les encodeurs Qwen3-VL ;
 - `POST /generate` génère une image SDXL avec identité et renvoie le PNG ;
 - `POST /generate/krea2` génère une image Krea v2 sans identité et renvoie le PNG ;
 - `GET /v1/models` expose le modèle d'embedding de texte local au format OpenAI ;
@@ -21,7 +22,7 @@ aucun modèle. Elles restent donc légères même lorsque les checkpoints sont
 absents ou temporairement indisponibles. La version PuLID provient des
 métadonnées du paquet générées depuis `project.version` dans `pyproject.toml`.
 Le contrat HTTP est versionné indépendamment en SemVer ; cette tranche expose
-`1.1.0`.
+`1.2.0`.
 
 La génération HTTP est séparée du chemin CLI avec sauvegarde. Elle ne crée ni
 image dans `outputs/`, ni manifeste JSON. L'image de référence, le
@@ -115,7 +116,7 @@ GET /health
 {
   "status": "ok",
   "version": "0.1.0",
-  "api_contract_version": "1.1.0"
+  "api_contract_version": "1.2.0"
 }
 ```
 
@@ -133,7 +134,7 @@ GET /version
 {
   "component": "pulid",
   "version": "0.1.0",
-  "api_contract_version": "1.1.0"
+  "api_contract_version": "1.2.0"
 }
 ```
 
@@ -150,11 +151,12 @@ GET /capabilities
 {
   "component": "pulid",
   "version": "0.1.0",
-  "api_contract_version": "1.1.0",
+  "api_contract_version": "1.2.0",
   "capabilities": {
     "krea2_generation": {
       "enabled": true,
       "generation_endpoint": "/generate/krea2",
+      "catalog_endpoint": "/models/krea2",
       "identity_transfer": false,
       "samplers": ["euler"],
       "schedulers": ["beta"]
@@ -729,18 +731,61 @@ réponses HTTP restent inchangés.
 
 ## Génération Krea v2 sans identité
 
+Le catalogue s'obtient sans charger les poids, indépendamment de SDXL :
+
+```http
+GET /models/krea2
+```
+
+```json
+{
+  "models": [
+    {"name": "mon Krea FP8.safetensors", "filename": "mon Krea FP8.safetensors", "default": true},
+    {"name": "autre Krea.safetensors", "filename": "autre Krea.safetensors", "default": false}
+  ],
+  "text_encoders": [
+    {"name": "Qwen personnel.safetensors", "filename": "Qwen personnel.safetensors", "default": true}
+  ]
+}
+```
+
+Réponse `200 application/json`, `Cache-Control: no-store`. Les listes sont relues
+à chaque appel : ajouter ou retirer un fichier ne nécessite pas de redémarrage.
+Un dossier absent/vide donne une liste vide, sans allocation GPU ni téléchargement.
+L'inventaire couvre les fichiers `.safetensors` directement dans les dossiers
+parents de `krea2.checkpoint` et `krea2.text_encoder` (par défaut
+`krea2/checkpoints` et `text_encoders/qwen3vl`). L'extension est insensible à la
+casse. Les sous-dossiers, dont `config/`, et les liens sortant du dossier sont exclus.
+Les noms restent intacts, y compris les espaces et accents. Le catalogue ne
+certifie pas la compatibilité des poids : le chargement vérifie leur contenu.
+
+Dans chaque liste, le fichier configuré porte `default: true` s'il est présent ;
+sinon le premier fichier dans l'ordre alphabétique insensible à la casse devient
+le défaut. Les champs de sélection omis suivent la même règle. Si aucun poids
+n'est disponible, la génération échoue avec un chemin et une action corrective.
+Un nom explicitement fourni mais absent produit `422`, sans substitution.
+
+**Intégration rp-bot :** proposer deux sélecteurs distincts et mémoriser leurs
+valeurs dans les réglages Krea. Afficher `filename`, envoyer `name` tel quel
+(extension incluse) dans `model` et `text_encoder` via `FormData`. Actualiser le
+catalogue lors d'un changement de serveur ou à la demande ; empêcher la génération
+si une liste est vide. `/models` et le réglage `model` SDXL restent indépendants.
+
 ```http
 POST /generate/krea2
 Content-Type: multipart/form-data
 ```
 
 Les formulaires `application/x-www-form-urlencoded` sont également acceptés.
-Le frontend léger utilise le proxy `POST /api/generate/krea2` ;
-`GET /api/capabilities` relaie la découverte du backend.
+Le frontend léger utilise le proxy `POST /api/generate/krea2` et charge ses
+sélecteurs via `GET /api/models/krea2`. La route de catalogue est aussi annoncée
+dans `capabilities.krea2_generation.catalog_endpoint` de `GET /capabilities`.
 
 | Champ | Défaut | Validation |
 |---|---|---|
 | `prompt` | obligatoire | 1 à 8000 caractères, non vide après trim |
+| `model` | défaut du catalogue Krea | nom exact avec extension, 1 à 255 caractères, aucun chemin |
+| `text_encoder` | défaut du catalogue Qwen | nom exact avec extension, 1 à 255 caractères, aucun chemin |
 | `width` | 1248 | entier, 64 à 2048, multiple de 16 |
 | `height` | 832 | entier, 64 à 2048, multiple de 16 |
 | `seed` | 0 | -1 ou 0 = aléatoire ; sinon 1 à 2^63−1 |
@@ -751,8 +796,8 @@ Le frontend léger utilise le proxy `POST /api/generate/krea2` ;
 | `denoise` | 1 | nombre fini, 0,01 à 1 |
 
 Les champs supplémentaires sont refusés, notamment `reference`, `character`,
-`strength`, `negative_prompt` et `model`. Le checkpoint se choisit côté serveur
-via `krea2.checkpoint`. Le conditionnement négatif est vide, comme dans le workflow.
+`strength` et `negative_prompt`. La sélection ne modifie pas la configuration
+globale. Le conditionnement négatif est vide, comme dans le workflow.
 Le tokenizer utilise une fenêtre de 1024 tokens, soit environ 1019 tokens utiles
 pour le prompt et 5 tokens de suffixe. Les tokens supplémentaires sont transmis
 au modèle de diffusion ; le texte au-delà de cette fenêtre reste tronqué.
@@ -774,6 +819,9 @@ Succès : `200 image/png`, avec les en-têtes :
 - `Content-Disposition: attachment; filename="krea2_<horodatage>.png"` ;
 - `Cache-Control: no-store` ;
 - `X-Generation-Model: krea2` ;
+- `X-Krea2-Model` et `X-Krea2-Text-Encoder` : noms des fichiers effectivement
+  sélectionnés, encodés en pourcentage UTF-8 (décoder avec `decodeURIComponent`
+  en JavaScript), pour préserver les espaces, accents et autres caractères ;
 - `X-Generation-Seed` : seed effective, à conserver comme chaîne en JavaScript ;
 - `X-Sampling-Method: euler` et `X-Sigma-Schedule: beta`.
 
@@ -815,7 +863,9 @@ de régler aussi l'URL du backend du frontend.
 Krea est sérialisé avec toutes les générations SDXL et tous les embeddings BGE,
 y compris en mode CUDA concurrent. Après les requêtes en cours, SDXL et BGE sont
 déchargés avant Krea. Sur CUDA, le pipeline Krea est conservé après succès et
-réutilisé pour les requêtes suivantes, y compris lorsque les paramètres changent.
+réutilisé pour les requêtes suivantes, y compris lorsque les paramètres de
+génération changent. Changer le checkpoint ou l'encodeur libère le pipeline
+précédent avant de charger la nouvelle paire de modèles.
 En offload par composant, les poids restent en RAM et le dernier composant actif
 (VAE) reste en VRAM entre les requêtes. Le cache CUDA n'est pas vidé après chaque
 image ; le VAE est offloadé au début de la requête suivante, avant Qwen.

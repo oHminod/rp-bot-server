@@ -2,8 +2,20 @@ from __future__ import annotations
 
 from html.parser import HTMLParser
 from pathlib import Path
+import shutil
+import subprocess
+import pytest
 
 from frontend.server import build_server, frontend_directory
+
+
+def test_frontend_krea_catalog_selection_and_persistence():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node requis pour exercer le client JavaScript")
+    result = subprocess.run([node, "tests/frontend_krea2.cjs"], cwd=frontend_directory().parent,
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 class _FormFieldParser(HTMLParser):
@@ -243,7 +255,11 @@ def test_build_server_configures_static_root_and_backend(monkeypatch) -> None:
     )
 
 
-def test_krea_proxy_preserves_png_and_generation_headers(monkeypatch) -> None:
+@pytest.mark.parametrize("method,path,body", [
+    ("POST", "/generate/krea2", b"prompt=hello&model=Custom.safetensors&text_encoder=Qwen.safetensors"),
+    ("GET", "/models/krea2", None),
+])
+def test_krea_proxy_preserves_catalog_png_and_headers(monkeypatch, method, path, body) -> None:
     from io import BytesIO
     from urllib.parse import urlsplit
     from frontend.server import FrontendRequestHandler
@@ -254,7 +270,8 @@ def test_krea_proxy_preserves_png_and_generation_headers(monkeypatch) -> None:
         def read(self):
             return b"png-response"
         def getheader(self, key):
-            return {"Content-Type": "image/png", "X-Generation-Model": "krea2", "X-Generation-Seed": "42"}.get(key)
+            return {"Content-Type": "image/png", "X-Generation-Model": "krea2", "X-Generation-Seed": "42",
+                    "X-Krea2-Model": "Custom.safetensors", "X-Krea2-Text-Encoder": "Qwen.safetensors"}.get(key)
     class Connection:
         def __init__(self, *args, **kwargs): pass
         def request(self, method, path, **kwargs):
@@ -263,24 +280,26 @@ def test_krea_proxy_preserves_png_and_generation_headers(monkeypatch) -> None:
         def close(self): seen["closed"] = True
     monkeypatch.setattr("frontend.server.HTTPConnection", Connection)
     handler = object.__new__(FrontendRequestHandler)
-    handler.path = "/api/generate/krea2"
-    handler.command = "POST"
+    handler.path = "/api" + path
+    handler.command = method
     handler.backend = urlsplit("http://127.0.0.1:12693")
-    body = b"prompt=hello&steps=10&cfg=1"
-    handler.headers = {"Content-Length": str(len(body)), "Content-Type": "application/x-www-form-urlencoded"}
-    handler.rfile = BytesIO(body)
+    handler.headers = {"Content-Length": str(len(body or b"")), "Content-Type": "application/x-www-form-urlencoded"}
+    handler.rfile = BytesIO(body or b"")
     handler.wfile = BytesIO()
     response_headers = {}
     handler.send_response = lambda *args: None
     handler.send_header = lambda k, v: response_headers.update({k: v})
     handler.end_headers = lambda: None
-    handler.do_POST()
-    assert seen["path"] == "/generate/krea2"
+    getattr(handler, "do_" + method)()
+    assert seen["path"] == path
+    assert seen["method"] == method
     assert seen["body"] == body
     assert seen["closed"]
     assert handler.wfile.getvalue() == b"png-response"
     assert response_headers["X-Generation-Model"] == "krea2"
     assert response_headers["X-Generation-Seed"] == "42"
+    assert response_headers["X-Krea2-Model"] == "Custom.safetensors"
+    assert response_headers["X-Krea2-Text-Encoder"] == "Qwen.safetensors"
 
 
 def test_frontend_exposes_krea_fields_without_identity_payload() -> None:
@@ -294,4 +313,7 @@ def test_frontend_exposes_krea_fields_without_identity_payload() -> None:
     assert "sampler:" in krea_body and "scheduler:" in krea_body and "denoise:" in krea_body
     assert 'form.append("reference"' not in krea_body
     assert 'form.append("character"' not in krea_body
-    assert 'fetch("/api/capabilities"' in source
+    assert 'fetch("/api/models/krea2"' in source
+    assert "required" in parser.fields["text_encoder"]
+    assert "model: elements.model.value" in krea_body
+    assert "text_encoder: elements.textEncoder.value" in krea_body

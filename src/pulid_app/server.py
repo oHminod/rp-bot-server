@@ -15,6 +15,7 @@ import secrets
 import unicodedata
 import re
 from typing import Annotated, Any, Literal
+from urllib.parse import quote
 
 from fastapi import FastAPI, File, Form, HTTPException, Response
 from fastapi.concurrency import run_in_threadpool
@@ -24,7 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from pulid_app import __version__
 from pulid_app.api_contract import API_CONTRACT_VERSION, capabilities_payload
-from pulid_app.config import AppConfig, load_config
+from pulid_app.config import AppConfig, Krea2Config, load_config
 from pulid_app.exceptions import (
     FaceNotDetectedError,
     ModelLoadError,
@@ -35,6 +36,7 @@ from pulid_app.exceptions import (
     actionable_error,
 )
 from pulid_app.models.identity_encoder import SUPPORTED_IMAGE_FORMATS
+from pulid_app.models.krea2_catalog import krea2_catalog, select_krea2_models
 from pulid_app.models.text_embedding import (
     TextEmbeddingService,
     load_llama_cpp_embedding_model,
@@ -84,6 +86,7 @@ class GeneratedPayload:
     model: str
     method: str
     sigmas: str
+    text_encoder: str | None = None
 
 
 class OpenAIEmbeddingRequest(BaseModel):
@@ -97,6 +100,8 @@ class OpenAIEmbeddingRequest(BaseModel):
 class Krea2Request(BaseModel):
     model_config = ConfigDict(extra="forbid")
     prompt: str = Field(min_length=1, max_length=KREA2_MAX_PROMPT_CHARACTERS)
+    model: str | None = Field(default=None, min_length=1, max_length=255)
+    text_encoder: str | None = Field(default=None, min_length=1, max_length=255)
     width: int = Field(default=1248, ge=64, le=2048, multiple_of=16)
     height: int = Field(default=832, ge=64, le=2048, multiple_of=16)
     seed: int = Field(default=0, ge=-1, le=MAX_SEED)
@@ -119,17 +124,24 @@ class Krea2GenerationService:
         self.now_factory = now_factory or (lambda: datetime.now(timezone.utc))
         self.random_seed = random_seed
         self._generator: Any | None = None
+        self._model_config: Krea2Config | None = None
 
     def close(self) -> None:
         """Libère Krea lors d'un changement de moteur, d'une erreur ou de l'arrêt."""
         generator, self._generator = self._generator, None
+        self._model_config = None
         if generator is not None:
             generator.close()
 
-    def generate(self, parameters: Krea2Parameters) -> GeneratedPayload:
+    def generate(self, parameters: Krea2Parameters, *, model: str | None = None,
+                 text_encoder: str | None = None) -> GeneratedPayload:
+        model_config = select_krea2_models(self.config.krea2, model=model, text_encoder=text_encoder)
         parameters = replace(parameters, seed=resolve_generation_seed(parameters.seed, self.random_seed))
+        if self._generator is not None and model_config != self._model_config:
+            self.close()
         if self._generator is None:
-            self._generator = self.generator_factory(self.config, **self.options)
+            self._generator = self.generator_factory(replace(self.config, krea2=model_config), **self.options)
+            self._model_config = model_config
         generator = self._generator
         succeeded = False
         try:
@@ -139,7 +151,8 @@ class Krea2GenerationService:
             image.save(output, format="PNG")
             content = output.getvalue()
             succeeded = True
-            return GeneratedPayload(content, filename, parameters.seed, "krea2", parameters.sampler, parameters.scheduler)
+            return GeneratedPayload(content, filename, parameters.seed, model_config.checkpoint.name,
+                                    parameters.sampler, parameters.scheduler, model_config.text_encoder.name)
         finally:
             if not self.keep_loaded or not succeeded:
                 try:
@@ -695,6 +708,8 @@ def create_app(
                 "X-Generation-Seed",
                 "X-SDXL-Model",
                 "X-Generation-Model",
+                "X-Krea2-Model",
+                "X-Krea2-Text-Encoder",
                 "X-Sampling-Method",
                 "X-Sigma-Schedule",
             ],
@@ -747,6 +762,14 @@ def create_app(
                 "sigma_schedules": list_sigma_schedules(),
             }
         except PuLIDAppError as exc:
+            raise _http_error(exc) from exc
+
+    @app.get("/models/krea2")
+    async def krea2_models(response: Response) -> dict[str, Any]:
+        response.headers["Cache-Control"] = "no-store"
+        try:
+            return await run_in_threadpool(krea2_catalog, config.krea2)
+        except (PuLIDAppError, OSError, ValueError) as exc:
             raise _http_error(exc) from exc
 
     @app.get("/v1/models")
@@ -875,12 +898,13 @@ def create_app(
     @app.post("/generate/krea2", response_class=Response)
     async def generate_krea2(request: Annotated[Krea2Request, Form()]) -> Response:
         try:
-            parameters = Krea2Parameters(**request.model_dump())
+            parameters = Krea2Parameters(**request.model_dump(exclude={"model", "text_encoder"}))
             # Ces verrous couvrent aussi le mode CUDA concurrent : Krea ne peut
             # pas décharger BGE/SDXL pendant qu'une requête les utilise.
             async with generation_lock, embedding_lock, accelerator_lock:
                 await run_in_threadpool(close_sdxl_and_embeddings)
-                payload = await run_in_threadpool(krea2_service.generate, parameters)
+                payload = await run_in_threadpool(krea2_service.generate, parameters,
+                                                 model=request.model, text_encoder=request.text_encoder)
         except (PuLIDAppError, OSError, RuntimeError, ValueError) as exc:
             raise _http_error(exc) from exc
         return Response(
@@ -889,6 +913,8 @@ def create_app(
                 "Content-Disposition": f'attachment; filename="{payload.filename}"',
                 "Cache-Control": "no-store", "X-Generation-Seed": str(payload.seed),
                 "X-Generation-Model": "krea2", "X-Sampling-Method": payload.method,
+                "X-Krea2-Model": quote(payload.model, safe=""),
+                "X-Krea2-Text-Encoder": quote(payload.text_encoder or "", safe=""),
                 "X-Sigma-Schedule": payload.sigmas,
             },
         )

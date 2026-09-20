@@ -172,10 +172,17 @@
               </summary>
 
               <div class="advanced-content">
-                <label class="field advanced-model" for="model" data-sdxl-only>
-                  <span>Modèle SDXL <b aria-hidden="true">*</b></span>
+                <label class="field advanced-model" for="model">
+                  <span><span id="modelLabel">Modèle SDXL</span> <b aria-hidden="true">*</b></span>
                   <select id="model" name="model" required disabled>
                     <option value="">Chargement des modèles…</option>
+                  </select>
+                </label>
+
+                <label class="field advanced-model" for="textEncoder" data-krea2-only hidden>
+                  <span>Encodeur Qwen3-VL <b aria-hidden="true">*</b></span>
+                  <select id="textEncoder" name="text_encoder" required disabled>
+                    <option value="">Chargement des encodeurs…</option>
                   </select>
                 </label>
 

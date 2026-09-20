@@ -77,7 +77,7 @@ def test_release_archive_is_deterministic_installable_source_without_local_data(
         metadata = json.load(archive.extractfile(f"{prefix}/release-metadata.json"))
 
     assert metadata == {
-        "apiContractVersion": "1.1.0",
+        "apiContractVersion": "1.2.0",
         "archiveFormatVersion": 1,
         "component": "pulid",
         "version": version,
