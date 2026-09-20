@@ -386,7 +386,9 @@ def test_mps_compact_weights_when_available(runtime, tmp_path):
         tensors["gate.weight_scale"].view(torch.uint8).to("mps"),
         tensors["gate.weight_scale_2"].reshape(1).view(torch.uint8).to("mps"),
         QuantizedSpec("nvfp4", tuple(expected.shape)), torch.float32)
-    torch.testing.assert_close(result.cpu(), expected, rtol=0, atol=0)
+    # Metal's power operation in the E4M3 lookup can round by two float32 ULPs.
+    # Keep zero exact and allow only float32 rounding for nonzero values.
+    torch.testing.assert_close(result.cpu(), expected, rtol=2 * torch.finfo(torch.float32).eps, atol=0)
     layer, dense = load_fp8_layer(torch, tmp_path)
     layer.to("mps")
     value = torch.ones(1, 32, device="mps")

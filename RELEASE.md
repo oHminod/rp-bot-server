@@ -10,6 +10,40 @@ distribution reste identifié par `pulid` dans `rp-bot`.
 sa racine, `release-metadata.json` et les commandes de construction lisent tous
 `project.version`; aucune version applicative n’est recopiée dans les scripts.
 
+## Version 0.1.3
+
+Prérelease MVP non signée, dans la continuité de 0.1.2. Elle publie le serveur
+Krea v2 et les améliorations de mise à jour depuis les sources :
+
+- `POST /generate/krea2` génère des images depuis un prompt, sans transfert
+  d'identité. `GET /models/krea2` expose les checkpoints Krea et les encodeurs
+  Qwen3-VL-4B compatibles, sélectionnables par leur nom de fichier d'origine.
+- Prise en charge des poids BF16/FP16/FP32, NVFP4 Comfy et FP8 E4M3 scaled
+  documentés dans le README, avec stockage compact des poids quantifiés.
+- Conditionnement adapté à la longueur du prompt, attention CUDA fusionnée,
+  conservation du pipeline et des composants en VRAM selon la mémoire
+  disponible, et cache limité des encodages texte pour les requêtes suivantes.
+- `install_windows.bat --update` conserve l'environnement et le profil,
+  synchronise les dépendances verrouillées et actualise le paquet applicatif.
+  L'installation et la mise à jour préparent les fichiers partagés de
+  configuration/tokenizer Qwen avec révision et empreintes vérifiées.
+  Les poids Krea et Qwen restent à fournir manuellement.
+
+Le contrat HTTP passe de 1.0.0 à 1.2.0. Python géré 3.11.16, uv 0.12.10 et
+la wheel `llama-cpp-python` 0.3.35 Metal sont conservés ; les dépendances
+incluent désormais Comfy Kitchen 0.2.35 sous Windows. Aucun poids de modèle
+n'est embarqué. L'archive conserve son nom `pulid-0.1.3.tar.gz` pour RP Bot.
+
+Validation de publication : **458 tests réussis, 38 ignorés**, sous Python
+3.11.16 sur macOS, avec le test réel de mise à jour incrémentale hors ligne
+via uv 0.12.10 et le test de déquantification Metal. La comparaison CPU/Metal
+tolère désormais l'arrondi float32 du calcul des échelles, sans changement
+du code d'inférence. L'inspection des modèles locaux et des chemins de cache
+est réussie. Les cas ignorés nécessitent CUDA (15), Windows natif (8),
+PowerShell (12), ou l'activation des intégrations lourdes (3). Aucune nouvelle
+génération lourde ni validation native Windows/CUDA n'a été exécutée pour
+cette publication.
+
 ## Version 0.1.2
 
 Corrige l'installation pilotée par RP Bot avec un dossier de modèles personnalisé.
@@ -108,7 +142,9 @@ d’intégrité.
 Pour mettre à jour une installation Windows existante, utiliser directement
 `install_windows.bat --update`, y compris en production. Ce mode conserve le
 profil enregistré et `.venv`, synchronise les dépendances depuis le verrou et
-actualise le paquet applicatif. Il ne prépare pas les modèles. Les dépendances
+actualise le paquet applicatif. Il prépare aussi les fichiers de configuration
+et de tokenizer Qwen manquants ou invalides, sans télécharger de poids.
+Les dépendances
 déjà conformes, les paquets supplémentaires et la DLL CPU portable vérifiée sont
 conservés. Un changement de version Python exige une installation complète.
 
